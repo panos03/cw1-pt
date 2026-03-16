@@ -26,10 +26,10 @@ def plot_accuracy_curves(training_history, filename="generalization_gap.png"):
     Generate a PNG plotting train vs. validation accuracy for both models.
 
     Uses Pillow for drawing. The plot shows 4 curves:
-    - Baseline train accuracy (solid blue)
-    - Baseline validation accuracy (dashed blue)
-    - Regularised train accuracy (solid red)
-    - Regularised validation accuracy (dashed red)
+    - Baseline train accuracy (dark blue)
+    - Baseline validation accuracy (light blue)
+    - Regularised train accuracy (dark red)
+    - Regularised validation accuracy (light red)
 
     Args:
         training_history (dict): Dictionary with keys:
@@ -97,46 +97,38 @@ def plot_accuracy_curves(training_history, filename="generalization_gap.png"):
               "Generalisation Gap: Train vs Val Accuracy", fill="black")
     draw.text((width // 2 - 20, height - 20), "Epoch", fill="black")
 
-    def draw_curve(accs, color, dashed=False):
+    def draw_curve(accs, color):
         """
         Draw an accuracy curve on the image.
 
         Args:
             accs (list of float): Accuracy values per epoch.
             color (str): Line color.
-            dashed (bool): If True, draw dashed line (dots every other segment).
         """
         points = [to_pixel(i, a) for i, a in enumerate(accs)]
         for i in range(len(points) - 1):
-            if dashed and i % 2 == 1:
-                continue
             draw.line([points[i], points[i + 1]], fill=color, width=2)
-        # Draw small circles at each point
         for p in points:
             draw.ellipse([p[0] - 2, p[1] - 2, p[0] + 2, p[1] + 2], fill=color)
 
-    # Plot all four curves
-    draw_curve(training_history["baseline_train_accs"], "#2196F3", dashed=False)   # Blue solid
-    draw_curve(training_history["baseline_val_accs"], "#2196F3", dashed=True)      # Blue dashed
-    draw_curve(training_history["reg_train_accs"], "#F44336", dashed=False)        # Red solid
-    draw_curve(training_history["reg_val_accs"], "#F44336", dashed=True)           # Red dashed
+    # Plot all four curves: train = dark, val = light version of same colour
+    draw_curve(training_history["baseline_train_accs"], "#1565C0")  # Dark blue
+    draw_curve(training_history["baseline_val_accs"],   "#90CAF9")  # Light blue
+    draw_curve(training_history["reg_train_accs"],      "#B71C1C")  # Dark red
+    draw_curve(training_history["reg_val_accs"],        "#EF9A9A")  # Light red
 
     # Legend
     legend_x = margin_left + plot_w + 15
     legend_y = margin_top + 20
     legend_items = [
-        ("Baseline Train", "#2196F3", False),
-        ("Baseline Val", "#2196F3", True),
-        ("Dropout Train", "#F44336", False),
-        ("Dropout Val", "#F44336", True),
+        ("Baseline Train", "#1565C0"),
+        ("Baseline Val",   "#90CAF9"),
+        ("Dropout Train",  "#B71C1C"),
+        ("Dropout Val",    "#EF9A9A"),
     ]
-    for idx, (label, color, dashed) in enumerate(legend_items):
+    for idx, (label, color) in enumerate(legend_items):
         ly = legend_y + idx * 25
-        if dashed:
-            draw.line([(legend_x, ly + 5), (legend_x + 10, ly + 5)], fill=color, width=2)
-            draw.line([(legend_x + 16, ly + 5), (legend_x + 26, ly + 5)], fill=color, width=2)
-        else:
-            draw.line([(legend_x, ly + 5), (legend_x + 26, ly + 5)], fill=color, width=2)
+        draw.line([(legend_x, ly + 5), (legend_x + 26, ly + 5)], fill=color, width=2)
         draw.text((legend_x + 32, ly), label, fill="black")
 
     img.save(filename)
@@ -165,7 +157,8 @@ def print_analysis(training_history):
     bl_best_val = max(training_history["baseline_val_accs"])
     rg_best_val = max(training_history["reg_val_accs"])
 
-    print(f"""\n
+    # TODO
+    print(f"""
 Summary Statistics:
   Baseline  - Final Train Acc: {bl_final_train:.4f}, Final Val Acc: {bl_final_val:.4f}, Gap: {bl_gap:.4f}
   Dropout   - Final Train Acc: {rg_final_train:.4f}, Final Val Acc: {rg_final_val:.4f}, Gap: {rg_gap:.4f}
@@ -276,9 +269,9 @@ def main():
     bl_val_acc = compute_accuracy(baseline, val_loader)
     reg_train_acc = compute_accuracy(regularised, train_loader)
     reg_val_acc = compute_accuracy(regularised, val_loader)
-    print(f"  Baseline - Train: {bl_train_acc:.4f} (history: {training_history['baseline_train_accs'][-1]:.4f}), "
+    print(f"  Baseline\n    Train: {bl_train_acc:.4f} (history: {training_history['baseline_train_accs'][-1]:.4f}), "
           f"Val: {bl_val_acc:.4f} (history: {training_history['baseline_val_accs'][-1]:.4f})")
-    print(f"  Dropout  - Train: {reg_train_acc:.4f} (history: {training_history['reg_train_accs'][-1]:.4f}), "
+    print(f"  Dropout\n    Train: {reg_train_acc:.4f} (history: {training_history['reg_train_accs'][-1]:.4f}), "
           f"Val: {reg_val_acc:.4f} (history: {training_history['reg_val_accs'][-1]:.4f})")
 
     # Generate plot
