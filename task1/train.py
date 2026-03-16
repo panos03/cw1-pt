@@ -110,19 +110,17 @@ class BaselineModel(nn.Module):
         return x
 
 
-class DropoutModel(nn.Module):
+class DropoutModel(BaselineModel):
     """
-    Deep neural network with 6 hidden layers regularised using ONLY dropout.
-    Same architecture as BaselineModel but with dropout applied after each
-    hidden layer's activation. No batch normalisation, no weight decay.
+    Extends BaselineModel by adding dropout regularisation after each hidden
+    layer's activation. Inherits all layer definitions (fc1-fc6, relu, flatten)
+    and overrides only the forward pass, ensuring an identical architecture
+    for a fair comparison.
 
     Dropout randomly zeros a fraction of activations during training, which:
     - Prevents co-adaptation of neurons (forces redundant representations)
     - Acts as an approximate ensemble of exponentially many sub-networks
     - Can be interpreted as Bayesian model sampling (Gal & Ghahramani, 2016)
-
-    Input: flattened 28x28 = 784 features.
-    Output: 10 classes (Fashion-MNIST).
     """
 
     def __init__(self, dropout_rate=0.4):
@@ -134,17 +132,6 @@ class DropoutModel(nn.Module):
                 and outputs are scaled accordingly by PyTorch automatically.
         """
         super(DropoutModel, self).__init__()
-        self.flatten = nn.Flatten()
-
-        # Same layer dimensions as baseline for fair comparison
-        self.fc1 = nn.Linear(784, 512)
-        self.fc2 = nn.Linear(512, 512)
-        self.fc3 = nn.Linear(512, 256)
-        self.fc4 = nn.Linear(256, 256)
-        self.fc5 = nn.Linear(256, 128)
-        self.fc6 = nn.Linear(128, 10)
-
-        self.relu = nn.ReLU()
         self.dropout = nn.Dropout(p=dropout_rate)
 
     def forward(self, x):
@@ -273,7 +260,7 @@ def main():
 
     # Regularised Dropout Model
     print("\n[3/4] Training Dropout Model (dropout rate=0.4)...")
-    print("  Optimiser: SGD, lr=0.01, momentum=0.9, NO weight decay")
+    print("  Optimiser: SGD, lr=0.01, momentum=0.9, no weight decay")
     regularised = DropoutModel(dropout_rate=0.4)
     reg_optimizer = torch.optim.SGD(
         regularised.parameters(), lr=0.01, momentum=0.9
