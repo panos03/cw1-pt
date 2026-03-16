@@ -1,97 +1,27 @@
 """
-Task 1: The Dynamics of Generalisation
-task.py - Loads saved models, generates generalisation_gap.png, prints technical analysis.
-
 GenAI Usage Statement:
-Claude (Anthropic) was used in an assistive role to help structure the code and draft
-the technical analysis. All code was reviewed, understood, and verified by the student.
+Claude was used in an assistive role to help structure the code and draft
+the technical analysis. All code was reviewed, understood, and verified by TODO
 """
 
 import torch
-import torch.nn as nn
 import json
 import os
-import numpy as np
 from PIL import Image, ImageDraw
+from train import BaselineModel, DropoutModel, get_data_loaders, compute_accuracy
+
+
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 BASELINE_MODEL_PATH = os.path.join(SCRIPT_DIR, "baseline_model.pth")
 REGULARISED_MODEL_PATH = os.path.join(SCRIPT_DIR, "regularised_model.pth")
-HISTORY_PATH = os.path.join(SCRIPT_DIR, "training_history.json")
-PLOT_PATH = os.path.join(SCRIPT_DIR, "generalisation_gap.png")
+TRAINING_HISTORY_PATH = os.path.join(SCRIPT_DIR, "training_history.json")
+PLOT_PATH = os.path.join(SCRIPT_DIR, "generalization_gap.png")
 
 
-# ---------------------------------------------------------------------------
-# Model Definitions (must match train.py)
-# ---------------------------------------------------------------------------
-
-class BaselineModel(nn.Module):
-    """
-    High-capacity deep neural network with 6 hidden layers, no regularisation.
-    """
-
-    def __init__(self):
-        super(BaselineModel, self).__init__()
-        self.flatten = nn.Flatten()
-        self.fc1 = nn.Linear(784, 512)
-        self.fc2 = nn.Linear(512, 512)
-        self.fc3 = nn.Linear(512, 256)
-        self.fc4 = nn.Linear(256, 256)
-        self.fc5 = nn.Linear(256, 128)
-        self.fc6 = nn.Linear(128, 10)
-        self.relu = nn.ReLU()
-
-    def forward(self, x):
-        """Forward pass. Input: (batch, 1, 28, 28). Output: (batch, 10)."""
-        x = self.flatten(x)
-        x = self.relu(self.fc1(x))
-        x = self.relu(self.fc2(x))
-        x = self.relu(self.fc3(x))
-        x = self.relu(self.fc4(x))
-        x = self.relu(self.fc5(x))
-        x = self.fc6(x)
-        return x
-
-
-class DropoutModel(nn.Module):
-    """
-    Deep neural network regularised using ONLY dropout.
-    Same architecture as BaselineModel with dropout after each hidden activation.
-    """
-
-    def __init__(self, dropout_rate=0.4):
-        """
-        Args:
-            dropout_rate (float): Dropout probability.
-        """
-        super(DropoutModel, self).__init__()
-        self.flatten = nn.Flatten()
-        self.fc1 = nn.Linear(784, 512)
-        self.fc2 = nn.Linear(512, 512)
-        self.fc3 = nn.Linear(512, 256)
-        self.fc4 = nn.Linear(256, 256)
-        self.fc5 = nn.Linear(256, 128)
-        self.fc6 = nn.Linear(128, 10)
-        self.relu = nn.ReLU()
-        self.dropout = nn.Dropout(p=dropout_rate)
-
-    def forward(self, x):
-        """Forward pass. Input: (batch, 1, 28, 28). Output: (batch, 10)."""
-        x = self.flatten(x)
-        x = self.dropout(self.relu(self.fc1(x)))
-        x = self.dropout(self.relu(self.fc2(x)))
-        x = self.dropout(self.relu(self.fc3(x)))
-        x = self.dropout(self.relu(self.fc4(x)))
-        x = self.dropout(self.relu(self.fc5(x)))
-        x = self.fc6(x)
-        return x
-
-
-# ---------------------------------------------------------------------------
 # Plotting with Pillow (no matplotlib)
-# ---------------------------------------------------------------------------
 
-def plot_accuracy_curves(history, filename="generalisation_gap.png"):
+def plot_accuracy_curves(training_history, filename="generalization_gap.png"):
     """
     Generate a PNG plotting train vs. validation accuracy for both models.
 
@@ -102,7 +32,7 @@ def plot_accuracy_curves(history, filename="generalisation_gap.png"):
     - Regularised validation accuracy (dashed red)
 
     Args:
-        history (dict): Dictionary with keys:
+        training_history (dict): Dictionary with keys:
             'baseline_train_accs', 'baseline_val_accs',
             'reg_train_accs', 'reg_val_accs', 'num_epochs'.
         filename (str): Output filename for the PNG image.
@@ -119,9 +49,9 @@ def plot_accuracy_curves(history, filename="generalisation_gap.png"):
     img = Image.new("RGB", (width, height), "white")
     draw = ImageDraw.Draw(img)
 
-    num_epochs = history["num_epochs"]
-    all_accs = (history["baseline_train_accs"] + history["baseline_val_accs"]
-                + history["reg_train_accs"] + history["reg_val_accs"])
+    num_epochs = training_history["num_epochs"]
+    all_accs = (training_history["baseline_train_accs"] + training_history["baseline_val_accs"]
+                + training_history["reg_train_accs"] + training_history["reg_val_accs"])
     y_min = max(0.0, min(all_accs) - 0.05)
     y_max = min(1.0, max(all_accs) + 0.02)
 
@@ -186,10 +116,10 @@ def plot_accuracy_curves(history, filename="generalisation_gap.png"):
             draw.ellipse([p[0] - 2, p[1] - 2, p[0] + 2, p[1] + 2], fill=color)
 
     # Plot all four curves
-    draw_curve(history["baseline_train_accs"], "#2196F3", dashed=False)   # Blue solid
-    draw_curve(history["baseline_val_accs"], "#2196F3", dashed=True)      # Blue dashed
-    draw_curve(history["reg_train_accs"], "#F44336", dashed=False)        # Red solid
-    draw_curve(history["reg_val_accs"], "#F44336", dashed=True)           # Red dashed
+    draw_curve(training_history["baseline_train_accs"], "#2196F3", dashed=False)   # Blue solid
+    draw_curve(training_history["baseline_val_accs"], "#2196F3", dashed=True)      # Blue dashed
+    draw_curve(training_history["reg_train_accs"], "#F44336", dashed=False)        # Red solid
+    draw_curve(training_history["reg_val_accs"], "#F44336", dashed=True)           # Red dashed
 
     # Legend
     legend_x = margin_left + plot_w + 15
@@ -213,35 +143,29 @@ def plot_accuracy_curves(history, filename="generalisation_gap.png"):
     print(f"  Saved plot: {filename}")
 
 
-# ---------------------------------------------------------------------------
 # Technical Analysis
-# ---------------------------------------------------------------------------
 
-def print_analysis(history):
+def print_analysis(training_history):
     """
     Print the ~500 word technical analysis discussing the generalization gap,
     bias-variance trade-off, and the role of optimizer as implicit regularization.
 
     Args:
-        history (dict): Training history dictionary.
+        training_history (dict): Training history dictionary.
     """
     # Compute summary statistics
-    bl_final_train = history["baseline_train_accs"][-1]
-    bl_final_val = history["baseline_val_accs"][-1]
+    bl_final_train = training_history["baseline_train_accs"][-1]
+    bl_final_val = training_history["baseline_val_accs"][-1]
     bl_gap = bl_final_train - bl_final_val
 
-    rg_final_train = history["reg_train_accs"][-1]
-    rg_final_val = history["reg_val_accs"][-1]
+    rg_final_train = training_history["reg_train_accs"][-1]
+    rg_final_val = training_history["reg_val_accs"][-1]
     rg_gap = rg_final_train - rg_final_val
 
-    bl_best_val = max(history["baseline_val_accs"])
-    rg_best_val = max(history["reg_val_accs"])
+    bl_best_val = max(training_history["baseline_val_accs"])
+    rg_best_val = max(training_history["reg_val_accs"])
 
-    print("\n" + "=" * 60)
-    print("TECHNICAL ANALYSIS: The Dynamics of Generalisation")
-    print("=" * 60)
-
-    print(f"""
+    print(f"""\n
 Summary Statistics:
   Baseline  - Final Train Acc: {bl_final_train:.4f}, Final Val Acc: {bl_final_val:.4f}, Gap: {bl_gap:.4f}
   Dropout   - Final Train Acc: {rg_final_train:.4f}, Final Val Acc: {rg_final_val:.4f}, Gap: {rg_gap:.4f}
@@ -326,37 +250,44 @@ in the baseline while showing dropout's sustained generalisation.
 """)
 
 
-# ---------------------------------------------------------------------------
 # Main
-# ---------------------------------------------------------------------------
 
 def main():
-    """Main function: load history, generate plot, print analysis."""
-    print("=" * 60)
-    print("Task 1: Generating Results")
-    print("=" * 60)
+    """Main function: load training_history, generate plot, print analysis."""
 
     # Load training history
-    print("\n[1/3] Loading training history...")
-    with open(HISTORY_PATH, "r") as f:
-        history = json.load(f)
+    print("\n[1/5] Loading training history...")
+    with open(TRAINING_HISTORY_PATH, "r") as f:
+        training_history = json.load(f)
 
     # Load models (verify they load correctly)
-    print("[2/3] Loading saved models...")
+    print("[2/5] Loading saved models...")
     baseline = BaselineModel()
     baseline.load_state_dict(torch.load(BASELINE_MODEL_PATH, weights_only=True))
     print("  Baseline model loaded successfully.")
-
     regularised = DropoutModel(dropout_rate=0.4)
     regularised.load_state_dict(torch.load(REGULARISED_MODEL_PATH, weights_only=True))
     print("  Dropout model loaded successfully.")
 
+    # Recompute final accuracies to confirm consistency with training history
+    print("[3/5] Recomputing final accuracies from saved models...")
+    train_loader, val_loader = get_data_loaders(batch_size=128)
+    bl_train_acc = compute_accuracy(baseline, train_loader)
+    bl_val_acc = compute_accuracy(baseline, val_loader)
+    reg_train_acc = compute_accuracy(regularised, train_loader)
+    reg_val_acc = compute_accuracy(regularised, val_loader)
+    print(f"  Baseline - Train: {bl_train_acc:.4f} (history: {training_history['baseline_train_accs'][-1]:.4f}), "
+          f"Val: {bl_val_acc:.4f} (history: {training_history['baseline_val_accs'][-1]:.4f})")
+    print(f"  Dropout  - Train: {reg_train_acc:.4f} (history: {training_history['reg_train_accs'][-1]:.4f}), "
+          f"Val: {reg_val_acc:.4f} (history: {training_history['reg_val_accs'][-1]:.4f})")
+
     # Generate plot
-    print("[3/3] Generating generalisation_gap.png...")
-    plot_accuracy_curves(history, filename=PLOT_PATH)
+    print("[4/5] Generating generalization_gap.png...")
+    plot_accuracy_curves(training_history, filename=PLOT_PATH)
 
     # Print technical analysis
-    print_analysis(history)
+    print("[5/5] Printing technical analysis...")
+    print_analysis(training_history)
 
 
 if __name__ == "__main__":

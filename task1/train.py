@@ -1,13 +1,10 @@
 """
-Task 1: The Dynamics of Generalisation
-train.py - Downloads data, builds and trains baseline and regularised models, saves weights.
-
 GenAI Usage Statement:
 Claude was used in an assistive role to help structure the code and draft
 the technical analysis. TODO
 Mistakes: TODO
 - used separate test set in get_data_loaders() but task.py only uses train/val
-- 
+- included relative paths using os.path.join()
 """
 
 import torch
@@ -23,7 +20,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(SCRIPT_DIR, "data")
 BASELINE_MODEL_PATH = os.path.join(SCRIPT_DIR, "baseline_model.pth")
 REGULARISED_MODEL_PATH = os.path.join(SCRIPT_DIR, "regularised_model.pth")
-HISTORY_PATH = os.path.join(SCRIPT_DIR, "training_history.json")
+TRAINING_HISTORY_PATH = os.path.join(SCRIPT_DIR, "training_history.json")
 
 
 # Data Loading
@@ -74,21 +71,21 @@ def get_data_loaders(batch_size=128, val_split=0.1):
 
 class BaselineModel(nn.Module):
     """
-    High-capacity deep neural network with 6 hidden layers and NO regularisation.
-    Input: flattened 28x28 = 784 features.
-    Output: 10 classes (Fashion-MNIST).
+    Deep funnel-shaped neural network with 6 hidden layers but no regularisation
+    Input: flattened 28x28 = 784 features
+    Output: 10 classes (Fashion-MNIST)
     """
 
     def __init__(self):
         super(BaselineModel, self).__init__()
-        self.flatten = nn.Flatten()
+        self.flatten = nn.Flatten()     # Flatten 2D image to 1D vector
         self.fc1 = nn.Linear(784, 512)
         self.fc2 = nn.Linear(512, 512)
         self.fc3 = nn.Linear(512, 256)
         self.fc4 = nn.Linear(256, 256)
         self.fc5 = nn.Linear(256, 128)
         self.fc6 = nn.Linear(128, 10)
-        self.relu = nn.ReLU()
+        self.relu = nn.ReLU()           # ReLU activation for non-linearity
 
     def forward(self, x):
         """
@@ -113,23 +110,19 @@ class BaselineModel(nn.Module):
 class DropoutModel(BaselineModel):
     """
     Extends BaselineModel by adding dropout regularisation after each hidden
-    layer's activation. Inherits all layer definitions (fc1-fc6, relu, flatten)
-    and overrides only the forward pass, ensuring an identical architecture
-    for a fair comparison.
+    layer's activation. Inherits same architecture as BaselineModel
+    and overrides only the forward pass, for a fair comparison.
 
-    Dropout randomly zeros a fraction of activations during training, which:
-    - Prevents co-adaptation of neurons (forces redundant representations)
-    - Acts as an approximate ensemble of exponentially many sub-networks
-    - Can be interpreted as Bayesian model sampling (Gal & Ghahramani, 2016)
+    Dropout randomly zeros a fraction of activations during training
     """
 
     def __init__(self, dropout_rate=0.4):
         """
         Args:
             dropout_rate (float): Probability of dropping a unit during training.
-                A rate of 0.4 provides strong regularisation while preserving
+                (A rate of 0.4 provides strong regularisation while preserving
                 enough capacity for learning. At inference, all units are active
-                and outputs are scaled accordingly by PyTorch automatically.
+                and outputs are scaled accordingly by PyTorch automatically.)
         """
         super(DropoutModel, self).__init__()
         self.dropout = nn.Dropout(p=dropout_rate)
@@ -160,11 +153,11 @@ class DropoutModel(BaselineModel):
 
 def compute_accuracy(model, data_loader):
     """
-    Compute classification accuracy on a dataset.
+    Compute a model's classification accuracy on a dataset.
 
     Args:
         model (nn.Module): The neural network model.
-        data_loader (DataLoader): Data loader to evaluate on.
+        data_loader (DataLoader): Data loader for dataset to evaluate on.
 
     Returns:
         float: Accuracy as a fraction in [0, 1].
@@ -181,7 +174,7 @@ def compute_accuracy(model, data_loader):
     return correct / total
 
 
-def train_model(model, train_loader, val_loader, optimizer, criterion, num_epochs=30):
+def train_model(model, train_loader, val_loader, optimiser, criterion, num_epochs=30):
     """
     Train a model and record training/validation accuracy per epoch.
 
@@ -189,7 +182,7 @@ def train_model(model, train_loader, val_loader, optimizer, criterion, num_epoch
         model (nn.Module): The neural network model to train.
         train_loader (DataLoader): Training data loader.
         val_loader (DataLoader): Validation data loader.
-        optimizer (torch.optim.Optimizer): Optimizer for parameter updates.
+        optimiser (torch.optim.Optimizer): Optimiser for parameter updates.
         criterion (nn.Module): Loss function.
         num_epochs (int): Number of training epochs.
 
@@ -205,11 +198,11 @@ def train_model(model, train_loader, val_loader, optimizer, criterion, num_epoch
         running_loss = 0.0
 
         for images, labels in train_loader:
-            optimizer.zero_grad()
+            optimiser.zero_grad()
             outputs = model(images)
             loss = criterion(outputs, labels)
             loss.backward()
-            optimizer.step()
+            optimiser.step()
             running_loss += loss.item() * images.size(0)
 
         # Compute accuracies at end of epoch
@@ -230,13 +223,12 @@ def train_model(model, train_loader, val_loader, optimizer, criterion, num_epoch
 # Main
 
 def main():
-    """Main function: load data, train both models, save weights and history."""
+    """Main function: load data, train both models, save weights and training_history."""
     torch.manual_seed(42)
     num_epochs = 30
-
-    print("=" * 60)
-    print("Task 1: The Dynamics of Generalisation")
-    print("=" * 60)
+    criterion = nn.CrossEntropyLoss()
+    learning_rate = 0.01
+    momentum = 0.9
 
     # Load data
     print("\n[1/4] Loading Fashion-MNIST dataset...")
@@ -246,28 +238,25 @@ def main():
 
     # Baseline Model (no regularisation)
     print("\n[2/4] Training Baseline Model (no regularisation)...")
-    print("  Optimiser: SGD, lr=0.01, momentum=0.9, no weight decay")
+    print(f"  Optimiser: SGD, lr={learning_rate}, momentum={momentum}, no weight decay")
     baseline = BaselineModel()
-    baseline_optimizer = torch.optim.SGD(
-        baseline.parameters(), lr=0.01, momentum=0.9
+    baseline_optimiser = torch.optim.SGD(
+        baseline.parameters(), lr=learning_rate, momentum=momentum
     )
-    criterion = nn.CrossEntropyLoss()
-
     baseline_train_accs, baseline_val_accs = train_model(
-        baseline, train_loader, val_loader, baseline_optimizer, criterion,
+        baseline, train_loader, val_loader, baseline_optimiser, criterion,
         num_epochs=num_epochs
     )
 
     # Regularised Dropout Model
     print("\n[3/4] Training Dropout Model (dropout rate=0.4)...")
-    print("  Optimiser: SGD, lr=0.01, momentum=0.9, no weight decay")
+    print(f"  Optimiser: SGD, lr={learning_rate}, momentum={momentum}, no weight decay")
     regularised = DropoutModel(dropout_rate=0.4)
-    reg_optimizer = torch.optim.SGD(
-        regularised.parameters(), lr=0.01, momentum=0.9
+    reg_optimiser = torch.optim.SGD(
+        regularised.parameters(), lr=learning_rate, momentum=momentum
     )
-
     reg_train_accs, reg_val_accs = train_model(
-        regularised, train_loader, val_loader, reg_optimizer, criterion,
+        regularised, train_loader, val_loader, reg_optimiser, criterion,
         num_epochs=num_epochs
     )
 
@@ -277,15 +266,15 @@ def main():
     torch.save(regularised.state_dict(), REGULARISED_MODEL_PATH)
 
     # Save training history as JSON for task.py to load
-    history = {
+    training_history = {
         "baseline_train_accs": baseline_train_accs,
         "baseline_val_accs": baseline_val_accs,
         "reg_train_accs": reg_train_accs,
         "reg_val_accs": reg_val_accs,
         "num_epochs": num_epochs,
     }
-    with open(HISTORY_PATH, "w") as f:
-        json.dump(history, f)
+    with open(TRAINING_HISTORY_PATH, "w") as f:
+        json.dump(training_history, f)
 
     print("  Saved: baseline_model.pth, regularised_model.pth, training_history.json")
     print("  Done!")
