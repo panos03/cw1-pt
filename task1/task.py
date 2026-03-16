@@ -1,13 +1,15 @@
 """
 GenAI Usage Statement:
-Claude was used in an assistive role to help structure the code and draft
-the technical analysis. All code was reviewed, understood, and verified by TODO
+Claude was used to generate the plot with Pillow
+Specific mistake:
+- dotted lines were used initially, which looked messy, so I changed to solid lines of different colour shade
 """
 
 import torch
 import json
 import os
 from PIL import Image, ImageDraw
+# NOTE: these imports are not required, but included as the CW description mentions task.py should load saved models
 from train import BaselineModel, DropoutModel, get_data_loaders, compute_accuracy
 
 
@@ -139,8 +141,7 @@ def plot_accuracy_curves(training_history, filename="generalization_gap.png"):
 
 def print_analysis(training_history):
     """
-    Print the ~500 word technical analysis discussing the generalization gap,
-    bias-variance trade-off, and the role of optimizer as implicit regularization.
+    Print the technical analysis
 
     Args:
         training_history (dict): Training history dictionary.
@@ -160,86 +161,88 @@ def print_analysis(training_history):
     # TODO
     print(f"""
 Summary Statistics:
-  Baseline  - Final Train Acc: {bl_final_train:.4f}, Final Val Acc: {bl_final_val:.4f}, Gap: {bl_gap:.4f}
-  Dropout   - Final Train Acc: {rg_final_train:.4f}, Final Val Acc: {rg_final_val:.4f}, Gap: {rg_gap:.4f}
-  Baseline Best Val Acc: {bl_best_val:.4f}, Dropout Best Val Acc: {rg_best_val:.4f}
+  Baseline
+        Final Train Acc: {bl_final_train:.4f}
+        Final Val Acc: {bl_final_val:.4f}
+        Gap: {bl_gap:.4f}
+  Dropout
+        Final Train Acc: {rg_final_train:.4f}
+        Final Val Acc: {rg_final_val:.4f}
+        Gap: {rg_gap:.4f}
+  Baseline Best Val Acc: {bl_best_val:.4f}
+  Dropout Best Val Acc: {rg_best_val:.4f}
 
 1. The Generalisation Gap
 
-The generalisation gap is the difference between training and validation
-accuracy. In the baseline model, we observe a substantial gap ({bl_gap:.4f})
-by the final epoch. With approximately 670,000 parameters across six fully
-connected layers and no regularisation, the baseline has sufficient capacity
-to memorise training-specific patterns and noise. Its training accuracy
-climbs toward very high values while validation accuracy plateaus or
-declines — the classic hallmark of overfitting.
+The generalisation gap measures the difference between training and
+validation accuracy, reflecting the degree of overfitting. The baseline
+model, with approximately 670,000 parameters across six fully connected
+layers and no regularisation, exhibits a gap of {bl_gap:.4f} by the final
+epoch. Its high capacity allows it to memorise training-specific noise,
+pushing training accuracy above 0.95 while validation accuracy plateaus
+around 0.90. This is the classic overfitting pattern shown in the lecture
+slides, where testing error diverges from training error as model
+complexity grows unchecked.
 
-The dropout model exhibits a markedly smaller gap ({rg_gap:.4f}). Its
-training accuracy is lower than the baseline's because dropout randomly
-zeros 40% of activations in each forward pass during training, effectively
-handicapping the network. However, its validation accuracy is comparable or
-superior, demonstrating that the learned features generalise better to
-unseen data.
+The dropout model achieves a substantially smaller gap of {rg_gap:.4f}.
+Although its training accuracy is lower, its validation accuracy remains
+comparable, confirming that the learned representations generalise better
+to unseen data.
 
-2. How Dropout Works as Regularisation
+2. Dropout as Regularisation
 
-Dropout (Srivastava et al., 2014) randomly sets each hidden unit's output
-to zero with probability p during training. This can be understood through
-multiple complementary lenses, as discussed in the lecture slides.
+Dropout randomly zeros each hidden unit's output with probability p=0.4
+during training. As covered in the lectures, this operates through two
+complementary mechanisms.
 
-First, dropout prevents co-adaptation of neurons. Without dropout, neurons
-can develop complex co-dependencies where specific neurons compensate for
-errors made by others. By randomly removing units, dropout forces each
-neuron to learn features that are independently useful, producing more
-robust and redundant internal representations.
+First, dropout prevents co-adaptation: by randomly removing neurons,
+each unit must learn independently useful features rather than relying on
+specific co-occurring activations. This produces more robust internal
+representations.
 
-Second, dropout acts as an approximate model ensemble. Each training step
-uses a different binary mask, effectively sampling from an exponentially
-large family of sub-networks (2^n possible sub-networks for n hidden
-units). At inference time, using all units with appropriately scaled weights
-approximates the geometric mean of these sub-network predictions — an
-implicit form of bagging without the cost of training separate models.
-
-Third, dropout can be interpreted as approximate Bayesian inference (Gal
-and Ghahramani, 2016). Each dropout mask samples a different set of model
-parameters, and the inference-time averaging approximates the posterior
-predictive distribution. This connection means dropout is equivalent to
-adding a specific form of noise penalty on the weight norms.
+Second, dropout functions as implicit model ensembling. Each forward pass
+samples a different sub-network via a binary mask, producing 2^n possible
+architectures for n hidden units. At inference, using all units with
+scaled weights approximates the geometric mean of these sub-network
+predictions. This connects directly to the bagging principle from the
+lecture slides: averaging multiple low-bias models reduces variance
+without substantially increasing bias. Dropout also acts as injecting
+Bernoulli noise into hidden units, which the lectures note is equivalent
+to a penalty on weight norms.
 
 3. Bias-Variance Trade-off
 
-The baseline sits at the high-variance end of the bias-variance spectrum:
-low training error (low bias) but high generalisation error (high variance).
-Dropout shifts this balance by increasing bias slightly — the network
-cannot achieve as low a training loss because it is impaired during
-training — while substantially reducing variance. The ensemble
-interpretation explains this: averaging over many sub-networks smooths out
-the idiosyncratic noise that any single model would capture, reducing the
-sensitivity of predictions to the particular training samples seen.
+The baseline occupies the high-variance end of the bias-variance spectrum:
+low training error (low bias) but a large generalisation gap (high
+variance). Dropout shifts this trade-off by slightly increasing bias, as
+the impaired training network cannot fit the data as tightly, while
+substantially reducing variance through the ensemble averaging effect.
+The net result is improved generalisation, visible in the plot where the
+dropout model's train and validation curves remain closer together
+throughout training.
 
-4. The Role of the Optimiser as Implicit Regularisation
+4. Implicit Regularisation from the Optimiser
 
 Both models use SGD with momentum (lr=0.01, momentum=0.9) and no weight
-decay. SGD itself provides implicit regularisation through mini-batch
-stochasticity: the noise in gradient estimates biases optimisation toward
-flat minima in the loss landscape, which correspond to solutions that
-generalise better. Momentum smooths the trajectory and helps escape sharp
-local minima, settling in broader basins. The learning rate controls the
-noise scale (proportional to lr / batch_size), linking it directly to the
-strength of implicit regularisation. These effects are present in both
-models, meaning the performance difference we observe is attributable
-specifically to dropout rather than optimiser choice.
+decay. SGD provides implicit regularisation via mini-batch stochasticity:
+gradient noise from random sampling biases optimisation toward flatter
+minima that generalise better. The lectures frame this through empirical
+risk minimisation, where the mini-batch loss approximates the true data
+distribution. The noise scale is proportional to lr/batch_size, so our
+settings introduce moderate gradient noise. Since both models share
+identical optimiser configurations, the observed performance difference
+is attributable specifically to dropout.
 
 5. Hyperparameter Justification
 
-The dropout rate of 0.4 was selected to provide clearly visible
-regularisation. The lecture slides note that rates up to 0.8 have been used
-successfully; 0.4 is moderate enough to allow learning while producing a
-distinct gap reduction compared to baseline. Both models use identical
-optimiser settings (SGD, lr=0.01, momentum=0.9, batch_size=128) with no
-weight decay, ensuring a fair comparison that isolates dropout's effect.
-Training for 30 epochs allows sufficient time for overfitting to manifest
-in the baseline while showing dropout's sustained generalisation.
+A dropout rate of 0.4 was chosen as a moderate value: the lectures note
+rates up to 0.8 can be effective, but 0.4 provides clear regularisation
+while still allowing the network to learn. Both models use identical
+architecture and optimiser settings (SGD, lr=0.01, momentum=0.9,
+batch_size=128, no weight decay) to ensure a fair comparison isolating
+dropout's effect. Training for 30 epochs gives sufficient time for
+overfitting to manifest in the baseline while demonstrating dropout's
+sustained generalisation advantage.
 """)
 
 
@@ -264,15 +267,15 @@ def main():
 
     # Recompute final accuracies to confirm consistency with training history
     print("[3/5] Recomputing final accuracies from saved models...")
-    train_loader, val_loader = get_data_loaders(batch_size=128)
+    train_loader, val_loader = get_data_loaders()
     bl_train_acc = compute_accuracy(baseline, train_loader)
     bl_val_acc = compute_accuracy(baseline, val_loader)
     reg_train_acc = compute_accuracy(regularised, train_loader)
     reg_val_acc = compute_accuracy(regularised, val_loader)
-    print(f"  Baseline\n    Train: {bl_train_acc:.4f} (history: {training_history['baseline_train_accs'][-1]:.4f}), "
-          f"Val: {bl_val_acc:.4f} (history: {training_history['baseline_val_accs'][-1]:.4f})")
-    print(f"  Dropout\n    Train: {reg_train_acc:.4f} (history: {training_history['reg_train_accs'][-1]:.4f}), "
-          f"Val: {reg_val_acc:.4f} (history: {training_history['reg_val_accs'][-1]:.4f})")
+    print(f"  Baseline\n    Train: {bl_train_acc:.4f} (history: {training_history['baseline_train_accs'][-1]:.4f})"
+          f"\n    Val: {bl_val_acc:.4f} (history: {training_history['baseline_val_accs'][-1]:.4f})")
+    print(f"  Dropout\n    Train: {reg_train_acc:.4f} (history: {training_history['reg_train_accs'][-1]:.4f})"
+          f"\n    Val: {reg_val_acc:.4f} (history: {training_history['reg_val_accs'][-1]:.4f})")
 
     # Generate plot
     print("[4/5] Generating generalization_gap.png...")

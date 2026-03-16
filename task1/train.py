@@ -1,10 +1,9 @@
 """
 GenAI Usage Statement:
-Claude was used in an assistive role to help structure the code and draft
-the technical analysis. TODO
-Mistakes: TODO
-- used separate test set in get_data_loaders() but task.py only uses train/val
-- included relative paths using os.path.join()
+Claude was used to check torch operations such as torch.max(), and for how to download datasets and use dataloaders
+Specific mistake:
+- downloaded separate test set in get_data_loaders(), but we only need train to construct train/val
+  and included raw paths for dataset root, which I changed to relative paths using os.path.join()
 """
 
 import torch
@@ -116,13 +115,11 @@ class DropoutModel(BaselineModel):
     Dropout randomly zeros a fraction of activations during training
     """
 
-    def __init__(self, dropout_rate=0.4):
+    def __init__(self, dropout_rate):
         """
         Args:
             dropout_rate (float): Probability of dropping a unit during training.
-                (A rate of 0.4 provides strong regularisation while preserving
-                enough capacity for learning. At inference, all units are active
-                and outputs are scaled accordingly by PyTorch automatically.)
+                (At inference, all units are active)
         """
         super(DropoutModel, self).__init__()
         self.dropout = nn.Dropout(p=dropout_rate)
@@ -174,7 +171,7 @@ def compute_accuracy(model, data_loader):
     return correct / total
 
 
-def train_model(model, train_loader, val_loader, optimiser, criterion, num_epochs=30):
+def train_model(model, train_loader, val_loader, optimiser, criterion, num_epochs):
     """
     Train a model and record training/validation accuracy per epoch.
 
@@ -224,6 +221,7 @@ def train_model(model, train_loader, val_loader, optimiser, criterion, num_epoch
 
 def main():
     """Main function: load data, train both models, save weights and training_history."""
+    
     torch.manual_seed(42)
     num_epochs = 30
     criterion = nn.CrossEntropyLoss()
@@ -232,7 +230,7 @@ def main():
 
     # Load data
     print("\n[1/4] Loading Fashion-MNIST dataset...")
-    train_loader, val_loader = get_data_loaders(batch_size=128)
+    train_loader, val_loader = get_data_loaders()
     print(f"  Train size: {len(train_loader.dataset)}, "
           f"Val size: {len(val_loader.dataset)}")
 
@@ -249,9 +247,10 @@ def main():
     )
 
     # Regularised Dropout Model
-    print("\n[3/4] Training Dropout Model (dropout rate=0.4)...")
+    dropout_rate = 0.4
+    print(f"\n[3/4] Training Dropout Model (dropout rate={dropout_rate})...")
     print(f"  Optimiser: SGD, lr={learning_rate}, momentum={momentum}, no weight decay")
-    regularised = DropoutModel(dropout_rate=0.4)
+    regularised = DropoutModel(dropout_rate=dropout_rate)
     reg_optimiser = torch.optim.SGD(
         regularised.parameters(), lr=learning_rate, momentum=momentum
     )
