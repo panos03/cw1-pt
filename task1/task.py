@@ -1,6 +1,6 @@
 """
-Task 1: The Dynamics of Generalization
-task.py - Loads saved models, generates generalization_gap.png, prints technical analysis.
+Task 1: The Dynamics of Generalisation
+task.py - Loads saved models, generates generalisation_gap.png, prints technical analysis.
 
 GenAI Usage Statement:
 Claude (Anthropic) was used in an assistive role to help structure the code and draft
@@ -10,8 +10,15 @@ the technical analysis. All code was reviewed, understood, and verified by the s
 import torch
 import torch.nn as nn
 import json
+import os
 import numpy as np
 from PIL import Image, ImageDraw
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+BASELINE_MODEL_PATH = os.path.join(SCRIPT_DIR, "baseline_model.pth")
+REGULARISED_MODEL_PATH = os.path.join(SCRIPT_DIR, "regularised_model.pth")
+HISTORY_PATH = os.path.join(SCRIPT_DIR, "training_history.json")
+PLOT_PATH = os.path.join(SCRIPT_DIR, "generalisation_gap.png")
 
 
 # ---------------------------------------------------------------------------
@@ -20,7 +27,7 @@ from PIL import Image, ImageDraw
 
 class BaselineModel(nn.Module):
     """
-    High-capacity deep neural network with 6 hidden layers, no regularization.
+    High-capacity deep neural network with 6 hidden layers, no regularisation.
     """
 
     def __init__(self):
@@ -84,15 +91,15 @@ class DropoutModel(nn.Module):
 # Plotting with Pillow (no matplotlib)
 # ---------------------------------------------------------------------------
 
-def plot_accuracy_curves(history, filename="generalization_gap.png"):
+def plot_accuracy_curves(history, filename="generalisation_gap.png"):
     """
     Generate a PNG plotting train vs. validation accuracy for both models.
 
     Uses Pillow for drawing. The plot shows 4 curves:
     - Baseline train accuracy (solid blue)
     - Baseline validation accuracy (dashed blue)
-    - Regularized train accuracy (solid red)
-    - Regularized validation accuracy (dashed red)
+    - Regularised train accuracy (solid red)
+    - Regularised validation accuracy (dashed red)
 
     Args:
         history (dict): Dictionary with keys:
@@ -157,7 +164,7 @@ def plot_accuracy_curves(history, filename="generalization_gap.png"):
 
     # Title and axis labels
     draw.text((width // 2 - 120, 10),
-              "Generalization Gap: Train vs Val Accuracy", fill="black")
+              "Generalisation Gap: Train vs Val Accuracy", fill="black")
     draw.text((width // 2 - 20, height - 20), "Epoch", fill="black")
 
     def draw_curve(accs, color, dashed=False):
@@ -231,7 +238,7 @@ def print_analysis(history):
     rg_best_val = max(history["reg_val_accs"])
 
     print("\n" + "=" * 60)
-    print("TECHNICAL ANALYSIS: The Dynamics of Generalization")
+    print("TECHNICAL ANALYSIS: The Dynamics of Generalisation")
     print("=" * 60)
 
     print(f"""
@@ -240,9 +247,9 @@ Summary Statistics:
   Dropout   - Final Train Acc: {rg_final_train:.4f}, Final Val Acc: {rg_final_val:.4f}, Gap: {rg_gap:.4f}
   Baseline Best Val Acc: {bl_best_val:.4f}, Dropout Best Val Acc: {rg_best_val:.4f}
 
-1. The Generalization Gap
+1. The Generalisation Gap
 
-The generalization gap is the difference between training and validation
+The generalisation gap is the difference between training and validation
 accuracy. In the baseline model, we observe a substantial gap ({bl_gap:.4f})
 by the final epoch. With approximately 670,000 parameters across six fully
 connected layers and no regularisation, the baseline has sufficient capacity
@@ -293,7 +300,7 @@ interpretation explains this: averaging over many sub-networks smooths out
 the idiosyncratic noise that any single model would capture, reducing the
 sensitivity of predictions to the particular training samples seen.
 
-4. The Role of the Optimizer as Implicit Regularisation
+4. The Role of the Optimiser as Implicit Regularisation
 
 Both models use SGD with momentum (lr=0.01, momentum=0.9) and no weight
 decay. SGD itself provides implicit regularisation through mini-batch
@@ -331,22 +338,22 @@ def main():
 
     # Load training history
     print("\n[1/3] Loading training history...")
-    with open("training_history.json", "r") as f:
+    with open(HISTORY_PATH, "r") as f:
         history = json.load(f)
 
     # Load models (verify they load correctly)
     print("[2/3] Loading saved models...")
     baseline = BaselineModel()
-    baseline.load_state_dict(torch.load("baseline_model.pth", weights_only=True))
+    baseline.load_state_dict(torch.load(BASELINE_MODEL_PATH, weights_only=True))
     print("  Baseline model loaded successfully.")
 
-    regularized = DropoutModel(dropout_rate=0.4)
-    regularized.load_state_dict(torch.load("regularized_model.pth", weights_only=True))
+    regularised = DropoutModel(dropout_rate=0.4)
+    regularised.load_state_dict(torch.load(REGULARISED_MODEL_PATH, weights_only=True))
     print("  Dropout model loaded successfully.")
 
     # Generate plot
-    print("[3/3] Generating generalization_gap.png...")
-    plot_accuracy_curves(history, filename="generalization_gap.png")
+    print("[3/3] Generating generalisation_gap.png...")
+    plot_accuracy_curves(history, filename=PLOT_PATH)
 
     # Print technical analysis
     print_analysis(history)

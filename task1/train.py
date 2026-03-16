@@ -1,10 +1,13 @@
 """
-Task 1: The Dynamics of Generalization
-train.py - Downloads data, builds and trains baseline and regularized models, saves weights.
+Task 1: The Dynamics of Generalisation
+train.py - Downloads data, builds and trains baseline and regularised models, saves weights.
 
 GenAI Usage Statement:
-Claude (Anthropic) was used in an assistive role to help structure the code and draft
-the technical analysis. All code was reviewed, understood, and verified by the student.
+Claude was used in an assistive role to help structure the code and draft
+the technical analysis. TODO
+Mistakes: TODO
+- used separate test set in get_data_loaders() but task.py only uses train/val
+- 
 """
 
 import torch
@@ -15,13 +18,19 @@ import json
 import os
 
 
-# ---------------------------------------------------------------------------
-# 1. Data Loading
-# ---------------------------------------------------------------------------
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(SCRIPT_DIR, "data")
+BASELINE_MODEL_PATH = os.path.join(SCRIPT_DIR, "baseline_model.pth")
+REGULARISED_MODEL_PATH = os.path.join(SCRIPT_DIR, "regularised_model.pth")
+HISTORY_PATH = os.path.join(SCRIPT_DIR, "training_history.json")
+
+
+# Data Loading
 
 def get_data_loaders(batch_size=128, val_split=0.1):
     """
-    Download Fashion-MNIST and create train, validation, and test loaders.
+    Download Fashion-MNIST and create train and validation loaders.
 
     Args:
         batch_size (int): Batch size for data loaders.
@@ -30,22 +39,17 @@ def get_data_loaders(batch_size=128, val_split=0.1):
     Returns:
         train_loader (DataLoader): Training data loader.
         val_loader (DataLoader): Validation data loader.
-        test_loader (DataLoader): Test data loader.
     """
     transform = transforms.Compose([
         transforms.ToTensor(),
         transforms.Normalize((0.5,), (0.5,))
     ])
 
-    # Download training and test sets
     full_train_dataset = torchvision.datasets.FashionMNIST(
-        root="./data", train=True, download=True, transform=transform
-    )
-    test_dataset = torchvision.datasets.FashionMNIST(
-        root="./data", train=False, download=True, transform=transform
+        root=DATA_DIR, train=True, download=True, transform=transform
     )
 
-    # Split training into train and validation
+    # Split training set into train and validation
     num_train = len(full_train_dataset)
     num_val = int(num_train * val_split)
     num_train = num_train - num_val
@@ -62,20 +66,15 @@ def get_data_loaders(batch_size=128, val_split=0.1):
     val_loader = torch.utils.data.DataLoader(
         val_dataset, batch_size=batch_size, shuffle=False
     )
-    test_loader = torch.utils.data.DataLoader(
-        test_dataset, batch_size=batch_size, shuffle=False
-    )
 
-    return train_loader, val_loader, test_loader
+    return train_loader, val_loader
 
 
-# ---------------------------------------------------------------------------
-# 2. Model Definitions
-# ---------------------------------------------------------------------------
+# Models
 
 class BaselineModel(nn.Module):
     """
-    High-capacity deep neural network with 6 hidden layers and NO regularization.
+    High-capacity deep neural network with 6 hidden layers and NO regularisation.
     Input: flattened 28x28 = 784 features.
     Output: 10 classes (Fashion-MNIST).
     """
@@ -170,9 +169,7 @@ class DropoutModel(nn.Module):
         return x
 
 
-# ---------------------------------------------------------------------------
-# 3. Training and Evaluation
-# ---------------------------------------------------------------------------
+# Training and Evaluation
 
 def compute_accuracy(model, data_loader):
     """
@@ -243,9 +240,7 @@ def train_model(model, train_loader, val_loader, optimizer, criterion, num_epoch
     return train_accs, val_accs
 
 
-# ---------------------------------------------------------------------------
-# 4. Main
-# ---------------------------------------------------------------------------
+# Main
 
 def main():
     """Main function: load data, train both models, save weights and history."""
@@ -253,19 +248,18 @@ def main():
     num_epochs = 30
 
     print("=" * 60)
-    print("Task 1: The Dynamics of Generalization")
+    print("Task 1: The Dynamics of Generalisation")
     print("=" * 60)
 
     # Load data
     print("\n[1/4] Loading Fashion-MNIST dataset...")
-    train_loader, val_loader, test_loader = get_data_loaders(batch_size=128)
+    train_loader, val_loader = get_data_loaders(batch_size=128)
     print(f"  Train size: {len(train_loader.dataset)}, "
-          f"Val size: {len(val_loader.dataset)}, "
-          f"Test size: {len(test_loader.dataset)}")
+          f"Val size: {len(val_loader.dataset)}")
 
-    # --- Baseline Model (no regularization, plain SGD) ---
-    print("\n[2/4] Training Baseline Model (no regularization)...")
-    print("  Optimizer: SGD, lr=0.01, momentum=0.9, no weight decay")
+    # Baseline Model (no regularisation)
+    print("\n[2/4] Training Baseline Model (no regularisation)...")
+    print("  Optimiser: SGD, lr=0.01, momentum=0.9, no weight decay")
     baseline = BaselineModel()
     baseline_optimizer = torch.optim.SGD(
         baseline.parameters(), lr=0.01, momentum=0.9
@@ -277,24 +271,23 @@ def main():
         num_epochs=num_epochs
     )
 
-    # --- Dropout Model (dropout only, no other regularisation) ---
-    print("\n[3/4] Training Dropout Model (dropout only, rate=0.4)...")
-    print("  Optimizer: SGD, lr=0.01, momentum=0.9, NO weight decay")
-    print("  Dropout rate: 0.4, No batch normalisation")
-    regularized = DropoutModel(dropout_rate=0.4)
+    # Regularised Dropout Model
+    print("\n[3/4] Training Dropout Model (dropout rate=0.4)...")
+    print("  Optimiser: SGD, lr=0.01, momentum=0.9, NO weight decay")
+    regularised = DropoutModel(dropout_rate=0.4)
     reg_optimizer = torch.optim.SGD(
-        regularized.parameters(), lr=0.01, momentum=0.9
+        regularised.parameters(), lr=0.01, momentum=0.9
     )
 
     reg_train_accs, reg_val_accs = train_model(
-        regularized, train_loader, val_loader, reg_optimizer, criterion,
+        regularised, train_loader, val_loader, reg_optimizer, criterion,
         num_epochs=num_epochs
     )
 
     # Save models
     print("\n[4/4] Saving models and training history...")
-    torch.save(baseline.state_dict(), "baseline_model.pth")
-    torch.save(regularized.state_dict(), "regularized_model.pth")
+    torch.save(baseline.state_dict(), BASELINE_MODEL_PATH)
+    torch.save(regularised.state_dict(), REGULARISED_MODEL_PATH)
 
     # Save training history as JSON for task.py to load
     history = {
@@ -304,10 +297,10 @@ def main():
         "reg_val_accs": reg_val_accs,
         "num_epochs": num_epochs,
     }
-    with open("training_history.json", "w") as f:
+    with open(HISTORY_PATH, "w") as f:
         json.dump(history, f)
 
-    print("  Saved: baseline_model.pth, regularized_model.pth, training_history.json")
+    print("  Saved: baseline_model.pth, regularised_model.pth, training_history.json")
     print("  Done!")
 
 
