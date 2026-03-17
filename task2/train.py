@@ -1,0 +1,359 @@
+"""
+GenAI Usage Statement:
+Claude was used to verify the numerically stable log-softmax formula and to
+check the PyTorch Beta distribution sampling API.
+Specific mistake:
+- Initial log-softmax implementation did not subtract the max logit before
+  computing exp/sum, causing numerical overflow for large logit values;
+  corrected by subtracting max(logits) before exp and sum.
+"""
+
+import torch
+import torch.nn as nn
+import torchvision
+import torchvision.transforms as transforms
+import json
+import os
+
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(SCRIPT_DIR, "data")
+MODEL_PATH = os.path.join(SCRIPT_DIR, "model.pth")
+TRAINING_HISTORY_PATH = os.path.join(SCRIPT_DIR, "training_history.json")
+
+
+# Data Loading
+
+def get_data_loaders(batch_size=128, val_split=0.1):
+    """
+    Download Fashion-MNIST and return train and validation data loaders.
+
+    Args:
+        batch_size (int): Batch size for both loaders.
+        val_split (float): Fraction of training data reserved for validation.
+
+    Returns:
+        train_loader (DataLoader): Training data loader.
+        val_loader (DataLoader): Validation data loader.
+    """
+    transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize((0.5,), (0.5,))
+    ])
+    full_train = torchvision.datasets.FashionMNIST(
+        root=DATA_DIR, train=True, download=True, transform=transform
+    )
+    num_val = int(len(full_train) * val_split)
+    num_train = len(full_train) - num_val
+    train_dataset, val_dataset = torch.utils.data.random_split(
+        full_train, [num_train, num_val],
+        generator=torch.Generator().manual_seed(42)
+    )
+    train_loader = torch.utils.data.DataLoader(
+        train_dataset, batch_size=batch_size, shuffle=True
+    )
+    val_loader = torch.utils.data.DataLoader(
+        val_dataset, batch_size=batch_size, shuffle=False
+    )
+    return train_loader, val_loader
+
+
+# Model
+
+class FashionMLP(nn.Module):
+    """
+    Deep MLP with 6 linear layers for Fashion-MNIST classification.
+    Input: flattened 28x28 = 784 features.
+    Output: 10 class logits.
+    """
+
+    def __init__(self):
+        super(FashionMLP, self).__init__()
+        self.flatten = nn.Flatten()
+        self.fc1 = nn.Linear(784, 512)
+        self.fc2 = nn.Linear(512, 512)
+        self.fc3 = nn.Linear(512, 256)
+        self.fc4 = nn.Linear(256, 256)
+        self.fc5 = nn.Linear(256, 128)
+        self.fc6 = nn.Linear(128, 10)
+        self.relu = nn.ReLU()
+
+    def forward(self, x):
+        """
+        Forward pass through the network.
+
+        Args:
+            x (torch.Tensor): Input of shape (B, 1, 28, 28).
+
+        Returns:
+            torch.Tensor: Logits of shape (B, 10).
+        """
+        x = self.flatten(x)
+        x = self.relu(self.fc1(x))
+        x = self.relu(self.fc2(x))
+        x = self.relu(self.fc3(x))
+        x = self.relu(self.fc4(x))
+        x = self.relu(self.fc5(x))
+        return self.fc6(x)
+
+
+# From-Scratch Components
+
+def to_onehot(labels, num_classes=10):
+    """
+    Convert integer class labels to one-hot vectors.
+
+    Args:
+        labels (torch.Tensor): Integer labels of shape (B,).
+        num_classes (int): Number of classes K.
+
+    Returns:
+        torch.Tensor: One-hot tensor of shape (B, K).
+    """
+    onehot = torch.zeros(labels.size(0), num_classes)
+    onehot.scatter_(1, labels.unsqueeze(1), 1.0)
+    return onehot
+
+
+def mixup(x, y_onehot, alpha=0.4):
+    """
+    Apply MixUp augmentation to a batch using lambda ~ Beta(alpha, alpha).
+
+    Generates mixed inputs and soft labels:
+        x_mixed = lam * x[i] + (1-lam) * x[j]
+        y_mixed = lam * y[i] + (1-lam) * y[j]
+    where (i, j) pairs come from a random permutation of the batch.
+    Lambda is symmetrised as max(lam, 1-lam) so the primary sample
+    always has the larger weight.
+
+    Implemented using only basic tensor operations (no external MixUp library).
+
+    Args:
+        x (torch.Tensor): Input images of shape (B, C, H, W).
+        y_onehot (torch.Tensor): One-hot labels of shape (B, K).
+        alpha (float): Beta distribution concentration parameter.
+
+    Returns:
+        mixed_x (torch.Tensor): Mixed images of shape (B, C, H, W).
+        mixed_y (torch.Tensor): Mixed soft labels of shape (B, K).
+        lam (float): Mixing coefficient lambda used.
+    """
+    # Sample lambda ~ Beta(alpha, alpha); symmetrise so lambda >= 0.5
+    lam_raw = torch.distributions.Beta(
+        torch.tensor(float(alpha)), torch.tensor(float(alpha))
+    ).sample().item()
+    lam = max(lam_raw, 1.0 - lam_raw)
+
+    # Random permutation for pairing
+    indices = torch.randperm(x.size(0))
+
+    # Convex interpolation of images and labels
+    mixed_x = lam * x + (1.0 - lam) * x[indices]
+    mixed_y = lam * y_onehot + (1.0 - lam) * y_onehot[indices]
+    return mixed_x, mixed_y, lam
+
+
+def label_smoothing_cross_entropy(logits, soft_labels, smoothing=0.1):
+    """
+    Cross-entropy loss with label smoothing, implemented from basic tensor ops.
+
+    Smooths the target distribution by mixing with a uniform distribution:
+        y_smooth = (1 - eps) * soft_labels + eps / K
+    then computes cross-entropy using a numerically stable log-softmax:
+        log p(k) = logit_k - max(logits) - log sum_j exp(logit_j - max(logits))
+
+    Args:
+        logits (torch.Tensor): Raw model outputs of shape (B, K).
+        soft_labels (torch.Tensor): Soft target distribution of shape (B, K);
+            may be one-hot labels or MixUp-blended targets.
+        smoothing (float): Label smoothing epsilon in [0, 1).
+
+    Returns:
+        torch.Tensor: Scalar mean cross-entropy loss.
+    """
+    K = logits.size(1)
+
+    # Apply label smoothing: redistribute eps probability mass uniformly
+    smooth = (1.0 - smoothing) * soft_labels + smoothing / K
+
+    # Numerically stable log-softmax
+    max_l = logits.max(dim=1, keepdim=True)[0]
+    stable = logits - max_l
+    log_softmax = stable - torch.log(torch.exp(stable).sum(dim=1, keepdim=True))
+
+    # Negative log-likelihood under smoothed targets, mean over batch
+    loss = -(smooth * log_softmax).sum(dim=1).mean()
+    return loss
+
+
+# Training and Evaluation
+
+def compute_accuracy(model, data_loader):
+    """
+    Compute classification accuracy (argmax over logits) on a dataset.
+
+    Args:
+        model (nn.Module): Model to evaluate.
+        data_loader (DataLoader): Data loader for the target dataset.
+
+    Returns:
+        float: Accuracy as a fraction in [0, 1].
+    """
+    model.eval()
+    correct, total = 0, 0
+    with torch.no_grad():
+        for images, labels in data_loader:
+            _, predicted = torch.max(model(images), dim=1)
+            correct += (predicted == labels).sum().item()
+            total += labels.size(0)
+    return correct / total
+
+
+def compute_val_loss(model, data_loader, smoothing=0.1):
+    """
+    Compute mean label-smoothing cross-entropy loss on a dataset (no MixUp).
+
+    Args:
+        model (nn.Module): Model to evaluate.
+        data_loader (DataLoader): Data loader for the target dataset.
+        smoothing (float): Label smoothing epsilon.
+
+    Returns:
+        float: Mean loss over the dataset.
+    """
+    model.eval()
+    total_loss, total = 0.0, 0
+    with torch.no_grad():
+        for images, labels in data_loader:
+            logits = model(images)
+            y_soft = to_onehot(labels)
+            loss = label_smoothing_cross_entropy(logits, y_soft, smoothing=smoothing)
+            total_loss += loss.item() * images.size(0)
+            total += images.size(0)
+    return total_loss / total
+
+
+def train_with_early_stopping(
+    model, train_loader, val_loader, optimiser,
+    alpha=0.4, smoothing=0.1, num_epochs=50, patience=7
+):
+    """
+    Train a model with MixUp augmentation, label smoothing, and early stopping.
+
+    MixUp is applied to every training batch. Validation is evaluated on
+    clean (non-mixed) examples. Training halts when validation loss has not
+    improved by more than 1e-4 for `patience` consecutive epochs.
+    The best model weights (lowest validation loss) are restored at the end.
+
+    Args:
+        model (nn.Module): Model to train.
+        train_loader (DataLoader): Training data loader.
+        val_loader (DataLoader): Validation data loader.
+        optimiser (torch.optim.Optimizer): Optimiser for parameter updates.
+        alpha (float): MixUp Beta distribution concentration parameter.
+        smoothing (float): Label smoothing epsilon.
+        num_epochs (int): Maximum number of training epochs.
+        patience (int): Number of epochs to wait without improvement before stopping.
+
+    Returns:
+        train_accs (list of float): Training accuracy per epoch.
+        val_accs (list of float): Validation accuracy per epoch.
+        stopped_epoch (int): The epoch at which training stopped.
+    """
+    train_accs, val_accs = [], []
+    best_val_loss = float('inf')
+    patience_counter = 0
+    best_state = None
+    stopped_epoch = num_epochs
+
+    for epoch in range(num_epochs):
+        model.train()
+        running_loss = 0.0
+
+        for images, labels in train_loader:
+            y_onehot = to_onehot(labels)
+            mixed_x, mixed_y, _ = mixup(images, y_onehot, alpha=alpha)
+
+            optimiser.zero_grad()
+            loss = label_smoothing_cross_entropy(model(mixed_x), mixed_y, smoothing=smoothing)
+            loss.backward()
+            optimiser.step()
+            running_loss += loss.item() * images.size(0)
+
+        train_acc = compute_accuracy(model, train_loader)
+        val_acc = compute_accuracy(model, val_loader)
+        val_loss = compute_val_loss(model, val_loader, smoothing=smoothing)
+        train_accs.append(train_acc)
+        val_accs.append(val_acc)
+
+        print(f"  Epoch [{epoch+1:2d}/{num_epochs}]  "
+              f"Loss: {running_loss / len(train_loader.dataset):.4f}  "
+              f"Train Acc: {train_acc:.4f}  Val Acc: {val_acc:.4f}  "
+              f"Val Loss: {val_loss:.4f}")
+
+        # Validation-based early stopping
+        if val_loss < best_val_loss - 1e-4:
+            best_val_loss = val_loss
+            patience_counter = 0
+            best_state = {k: v.clone() for k, v in model.state_dict().items()}
+        else:
+            patience_counter += 1
+            if patience_counter >= patience:
+                print(f"  Early stopping triggered at epoch {epoch+1} "
+                      f"(no improvement for {patience} epochs).")
+                stopped_epoch = epoch + 1
+                break
+
+    # Restore best weights
+    if best_state is not None:
+        model.load_state_dict(best_state)
+
+    return train_accs, val_accs, stopped_epoch
+
+
+# Main
+
+def main():
+    """Load data, train model with MixUp + label smoothing + early stopping, save."""
+    torch.manual_seed(42)
+    alpha = 0.4        # MixUp Beta concentration parameter
+    smoothing = 0.1    # Label smoothing epsilon
+    lr = 0.01
+    momentum = 0.9
+    num_epochs = 50
+    patience = 7
+
+    print("\n[1/3] Loading Fashion-MNIST dataset...")
+    train_loader, val_loader = get_data_loaders()
+    print(f"  Train: {len(train_loader.dataset)}, Val: {len(val_loader.dataset)}")
+
+    print(f"\n[2/3] Training with MixUp (alpha={alpha}) + "
+          f"Label Smoothing (eps={smoothing})...")
+    print(f"  SGD lr={lr}, momentum={momentum}, "
+          f"max epochs={num_epochs}, patience={patience}")
+
+    model = FashionMLP()
+    optimiser = torch.optim.SGD(model.parameters(), lr=lr, momentum=momentum)
+
+    train_accs, val_accs, stopped_epoch = train_with_early_stopping(
+        model, train_loader, val_loader, optimiser,
+        alpha=alpha, smoothing=smoothing,
+        num_epochs=num_epochs, patience=patience
+    )
+
+    print(f"\n[3/3] Saving model (best weights from epoch <= {stopped_epoch})...")
+    torch.save(model.state_dict(), MODEL_PATH)
+    with open(TRAINING_HISTORY_PATH, "w") as f:
+        json.dump({
+            "train_accs": train_accs,
+            "val_accs": val_accs,
+            "stopped_epoch": stopped_epoch,
+            "alpha": alpha,
+            "smoothing": smoothing,
+        }, f)
+    print("  Saved: model.pth, training_history.json")
+    print("  Done!")
+
+
+if __name__ == "__main__":
+    main()
