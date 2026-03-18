@@ -1,11 +1,9 @@
 """
-GenAI Usage Statement: TODO
-Claude was used to verify the numerically stable log-softmax formula and to
-check the PyTorch Beta distribution sampling API.
+GenAI Usage Statement:
+Claude was used to check torch operations such as torch.distributions.Beta(),
+to verify the numerically stable log-softmax formula, and for saving model and training history.
 Specific mistake:
-- Initial log-softmax implementation did not subtract the max logit before
-  computing exp/sum, causing numerical overflow for large logit values;
-  corrected by subtracting max(logits) before exp and sum.
+- thought best model weights were from early-stopped epoch, but are from early-stopped epoch minus 'patience'
 """
 
 import torch
@@ -194,13 +192,13 @@ def label_smoothing_cross_entropy(logits, original_target_labels, smoothing=0.1)
 
 # Training and Evaluation
 
-def compute_accuracy(model, data_loader):
+def compute_accuracy(model, data_loader):   # (same as Task 1)
     """
-    Compute classification accuracy (argmax over logits) on a dataset.
+    Compute a model's classification accuracy on a dataset.
 
     Args:
-        model (nn.Module): Model to evaluate.
-        data_loader (DataLoader): Data loader for the target dataset.
+        model (nn.Module): The neural network model.
+        data_loader (DataLoader): Data loader for dataset to evaluate on.
 
     Returns:
         float: Accuracy as a fraction in [0, 1].
@@ -217,6 +215,7 @@ def compute_accuracy(model, data_loader):
     return correct / total
 
 
+# NOTE: used instead of compute_accuracy for early stopping, as loss is smoother and more sensitive to small improvements
 def compute_val_loss(model, data_loader, smoothing=0.1):
     """
     Compute mean label-smoothing cross-entropy loss on a dataset (no MixUp).
@@ -230,7 +229,8 @@ def compute_val_loss(model, data_loader, smoothing=0.1):
         float: Mean loss over the dataset.
     """
     model.eval()
-    total_loss, total = 0.0, 0
+    total_loss = 0.0
+    total = 0.0
     with torch.no_grad():
         for images, labels in data_loader:
             logits = model(images)
@@ -243,15 +243,14 @@ def compute_val_loss(model, data_loader, smoothing=0.1):
 
 def train_with_early_stopping(
     model, train_loader, val_loader, optimiser,
-    alpha=0.4, smoothing=0.1, num_epochs=50, patience=7
-):
+    alpha=0.4, smoothing=0.1, num_epochs=50, patience=7, min_delta=1e-4
+):      # builds on Task 1's train_model()
     """
-    Train a model with MixUp augmentation, label smoothing, and early stopping.
-
-    MixUp is applied to every training batch. Validation is evaluated on
-    clean (non-mixed) examples. Training halts when validation loss has not
-    improved by more than 1e-4 for `patience` consecutive epochs.
-    The best model weights (lowest validation loss) are restored at the end.
+    Train a model with MixUp, label smoothing, and early stopping.
+    - MixUp is applied to every training batch
+    - Label smoothing is used for both training and validation loss computation
+    - Validation is evaluated on non-mixed examples
+    - Training ends when validation loss hasn't improved by more than 'min_delta' for 'patience' consecutive epochs.
 
     Args:
         model (nn.Module): Model to train.
@@ -262,13 +261,15 @@ def train_with_early_stopping(
         smoothing (float): Label smoothing epsilon.
         num_epochs (int): Maximum number of training epochs.
         patience (int): Number of epochs to wait without improvement before stopping.
+        min_delta (float): Minimum improvement in validation loss to reset patience.
 
     Returns:
         train_accs (list of float): Training accuracy per epoch.
         val_accs (list of float): Validation accuracy per epoch.
         stopped_epoch (int): The epoch at which training stopped.
     """
-    train_accs, val_accs = [], []
+    train_accs = []
+    val_accs = []
     best_val_loss = float('inf')
     patience_counter = 0
     best_state = None
@@ -279,11 +280,13 @@ def train_with_early_stopping(
         running_loss = 0.0
 
         for images, labels in train_loader:
+            # Apply MixUp before forward pass
             y_onehot = to_onehot(labels)
             mixed_x, mixed_y, _ = mixup(images, y_onehot, alpha=alpha)
 
             optimiser.zero_grad()
-            loss = label_smoothing_cross_entropy(model(mixed_x), mixed_y, smoothing=smoothing)
+            outputs = model(mixed_x)
+            loss = label_smoothing_cross_entropy(outputs, mixed_y, smoothing=smoothing)
             loss.backward()
             optimiser.step()
             running_loss += loss.item() * images.size(0)
@@ -294,25 +297,27 @@ def train_with_early_stopping(
         train_accs.append(train_acc)
         val_accs.append(val_acc)
 
+        avg_loss = running_loss / len(train_loader.dataset)
         print(f"  Epoch [{epoch+1:2d}/{num_epochs}]  "
-              f"Loss: {running_loss / len(train_loader.dataset):.4f}  "
+              f"Loss: {avg_loss:.4f}  "
               f"Train Acc: {train_acc:.4f}  Val Acc: {val_acc:.4f}  "
               f"Val Loss: {val_loss:.4f}")
 
         # Validation-based early stopping
-        if val_loss < best_val_loss - 1e-4:
+        if val_loss < best_val_loss - min_delta:
             best_val_loss = val_loss
             patience_counter = 0
             best_state = {k: v.clone() for k, v in model.state_dict().items()}
         else:
+            # No significant validation loss improvement
             patience_counter += 1
             if patience_counter >= patience:
-                print(f"  Early stopping triggered at epoch {epoch+1} "
-                      f"(no improvement for {patience} epochs).")
                 stopped_epoch = epoch + 1
+                print(f"  Early stopping triggered at epoch {stopped_epoch} "
+                      f"(no improvement for {patience} epochs).")
                 break
 
-    # Restore best weights
+    # Restore best weights from the epoch with lowest validation loss
     if best_state is not None:
         model.load_state_dict(best_state)
 
@@ -322,7 +327,8 @@ def train_with_early_stopping(
 # Main
 
 def main():
-    """Load data, train model with MixUp + label smoothing + early stopping, save."""
+    """Main function: load data, train model with MixUp + label smoothing + early stopping, save weights and training history."""
+    
     torch.manual_seed(42)
     alpha = 0.4        # MixUp Beta concentration parameter
     smoothing = 0.1    # Label smoothing epsilon
@@ -330,35 +336,45 @@ def main():
     momentum = 0.9
     num_epochs = 50
     patience = 7
+    min_delta = 1e-4    # early stopping improvement threshold
 
+    # Load data
     print("\n[1/3] Loading Fashion-MNIST dataset...")
     train_loader, val_loader = get_data_loaders()
     print(f"  Train: {len(train_loader.dataset)}, Val: {len(val_loader.dataset)}")
 
+    # Train model
     print(f"\n[2/3] Training with MixUp (alpha={alpha}) + "
           f"Label Smoothing (eps={smoothing})...")
-    print(f"  SGD lr={learning_rate}, momentum={momentum}, "
-          f"max epochs={num_epochs}, patience={patience}")
-
+    print(f"  Optimiser: SGD, lr={learning_rate}, momentum={momentum}, no weight decay")
+    print(f"  Early Stopping: patience={patience}, min_delta={min_delta}, max epochs={num_epochs}")  # clarify early stopping parameters in printout
     model = FashionMLP()
-    optimiser = torch.optim.SGD(model.parameters(), lr=learning_rate, momentum=momentum)
-
+    optimiser = torch.optim.SGD(
+        model.parameters(), lr=learning_rate, momentum=momentum
+    )
     train_accs, val_accs, stopped_epoch = train_with_early_stopping(
         model, train_loader, val_loader, optimiser,
         alpha=alpha, smoothing=smoothing,
-        num_epochs=num_epochs, patience=patience
+        num_epochs=num_epochs, patience=patience, min_delta=min_delta
     )
 
-    print(f"\n[3/3] Saving model (best weights from epoch <= {stopped_epoch})...")
+    # Save model
+    best_epoch = stopped_epoch - patience if stopped_epoch < num_epochs else num_epochs
+    print(f"\n[3/3] Saving model (best weights from epoch {best_epoch}) and training history...")
     torch.save(model.state_dict(), MODEL_PATH)
+
+    # Save training history as JSON for task.py to load
+    training_history = {
+        "train_accs": train_accs,
+        "val_accs": val_accs,
+        "stopped_epoch": stopped_epoch,
+        "best_epoch": best_epoch,
+        "alpha": alpha,
+        "smoothing": smoothing,
+    }
     with open(TRAINING_HISTORY_PATH, "w") as f:
-        json.dump({
-            "train_accs": train_accs,
-            "val_accs": val_accs,
-            "stopped_epoch": stopped_epoch,
-            "alpha": alpha,
-            "smoothing": smoothing,
-        }, f)
+        json.dump(training_history, f)
+
     print("  Saved: model.pth, training_history.json")
     print("  Done!")
 

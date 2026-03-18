@@ -220,7 +220,7 @@ def train_model(model, train_loader, val_loader, optimiser, criterion, num_epoch
 # Main
 
 def main():
-    """Main function: load data, train both models, save weights and training_history."""
+    """Main function: load data, train both models, save weights and training history."""
     
     torch.manual_seed(42)
     num_epochs = 30
