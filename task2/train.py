@@ -3,7 +3,8 @@ GenAI Usage Statement:
 Claude was used to check torch operations such as torch.distributions.Beta(),
 to verify the numerically stable log-softmax formula, and for saving model and training history.
 Specific mistake:
-- thought best model weights were from early-stopped epoch, but are from early-stopped epoch minus 'patience'
+- thought best model weights were from early-stopped epoch, but are from early-stopped epoch minus 'patience',
+  also used a fixed lamda for a whole mixed-up batch, changed this to a different lamda per pair
 """
 
 import torch
@@ -139,19 +140,20 @@ def mixup(x, y_onehot, alpha=0.4):
     Returns:
         mixed_x (torch.Tensor): Mixed images of shape (batch_size, C, H, W).
         mixed_y (torch.Tensor): Mixed soft labels of shape (batch_size, K).
-        lam (float): Mixing coefficient lambda used.
+        lam (torch.Tensor): Per-sample mixing coefficients of shape (batch_size,).
     """
-    # Sample lambda ~ Beta(alpha, alpha)
-    lam = torch.distributions.Beta(
-        torch.tensor(float(alpha)), torch.tensor(float(alpha))
-    ).sample().item()
+    # Sample one lambda per pair ~ Beta(alpha, alpha)
+    alpha_t = torch.tensor(float(alpha))
+    lam = torch.distributions.Beta(alpha_t, alpha_t).sample((x.size(0),))
 
     # Random permutation for pairing
     indices = torch.randperm(x.size(0))
 
-    # Mixup interpolation of batch of images and labels
-    mixed_x = lam * x + (1.0 - lam) * x[indices]
-    mixed_y = lam * y_onehot + (1.0 - lam) * y_onehot[indices]
+    # Both views are of the same lam tensor, so lam[i] is shared between image and label
+    lam_img = lam.view(-1, 1, 1, 1)     # broadcast over (C, H, W)
+    lam_lbl = lam.view(-1, 1)           # broadcast over K classes
+    mixed_x = lam_img * x + (1.0 - lam_img) * x[indices]
+    mixed_y = lam_lbl * y_onehot + (1.0 - lam_lbl) * y_onehot[indices]
 
     return mixed_x, mixed_y, lam
 
