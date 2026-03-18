@@ -334,7 +334,7 @@ def print_report(history, clean_acc, noisy_acc, sigma):
   Noisy Test Acc (sigma={sigma}): {noisy_acc:.4f}
   Robustness Drop:          {clean_acc - noisy_acc:.4f}
 
-=== Technical Analysis (~500 words) ===
+=== Technical Analysis ===
 
 1. Why MixUp Prevents Memorisation
 
