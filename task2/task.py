@@ -1,11 +1,8 @@
 """
-GenAI Usage Statement:
-Claude was used to assist with computing pixel offsets for the Pillow montage
-grid and structuring the noisy test-set evaluation pipeline.
+GenAI Usage Statement:  TODO
+Claude was used for Pillow operations and plotting
 Specific mistake:
-- Initially added Gaussian noise after denormalising to [0, 1], producing
-  out-of-range values; corrected to add noise in the normalised [-1, 1]
-  space and clamp to [-1, 1] before passing to the model.
+- ...
 """
 
 import torch
@@ -24,11 +21,11 @@ TRAINING_HISTORY_PATH = os.path.join(SCRIPT_DIR, "training_history.json")
 DEMO_PATH = os.path.join(SCRIPT_DIR, "robustness_demo.png")
 
 
-# Data Loading
+# Data Loading - for noisy test set evaluation
 
 def get_test_loader(batch_size=128):
     """
-    Return a DataLoader for the Fashion-MNIST test split.
+    Download Fashion-MNIST and return a DataLoader for the test split.
 
     Args:
         batch_size (int): Batch size.
@@ -40,22 +37,24 @@ def get_test_loader(batch_size=128):
         transforms.ToTensor(),
         transforms.Normalize((0.5,), (0.5,))
     ])
+
     test_dataset = torchvision.datasets.FashionMNIST(
         root=DATA_DIR, train=False, download=True, transform=transform
     )
-    return torch.utils.data.DataLoader(
+
+    test_loader = torch.utils.data.DataLoader(
         test_dataset, batch_size=batch_size, shuffle=False
     )
+
+    return test_loader
 
 
 # Noisy Evaluation
 
 def add_gaussian_noise(x, sigma=0.3):
     """
-    Add i.i.d. Gaussian noise to a tensor and clamp to the valid input range.
-
-    Noise is added in the normalised [-1, 1] space before the model sees
-    the input. The result is clamped to prevent values outside this range.
+    Random gaussian noise is added in the normalised [-1, 1] space.
+    The result is clamped to prevent values outside this range.
 
     Args:
         x (torch.Tensor): Input tensor with values in [-1, 1].
@@ -64,10 +63,11 @@ def add_gaussian_noise(x, sigma=0.3):
     Returns:
         torch.Tensor: Noisy tensor, clamped to [-1, 1].
     """
-    return torch.clamp(x + sigma * torch.randn_like(x), -1.0, 1.0)
+    noisy_x = x + sigma * torch.randn_like(x)
+    return torch.clamp(noisy_x, -1.0, 1.0)
 
 
-def evaluate_noisy(model, test_loader, sigma=0.3):
+def evaluate_noisy(model, test_loader, sigma=0.3):      # similar to compute_accuracy (but with noise added to inputs)
     """
     Evaluate model accuracy on the test set with added Gaussian noise.
 
@@ -80,13 +80,15 @@ def evaluate_noisy(model, test_loader, sigma=0.3):
         float: Accuracy on the noisy test set as a fraction in [0, 1].
     """
     model.eval()
-    correct, total = 0, 0
+    correct = 0
+    total = 0
     with torch.no_grad():
         for images, labels in test_loader:
-            noisy = add_gaussian_noise(images, sigma=sigma)
-            _, predicted = torch.max(model(noisy), dim=1)
-            correct += (predicted == labels).sum().item()
+            noisy_images = add_gaussian_noise(images, sigma=sigma)
+            outputs = model(noisy_images)
+            _, predicted = torch.max(outputs, dim=1)
             total += labels.size(0)
+            correct += (predicted == labels).sum().item()
     return correct / total
 
 
@@ -96,8 +98,8 @@ def tensor_to_pil(t, scale=2):
     """
     Convert a single normalised (1, H, W) tensor to an upscaled RGB PIL image.
 
-    Denormalises from [-1, 1] to [0, 255] uint8, then upscales using
-    nearest-neighbour interpolation for pixel-art clarity.
+    Denormalises from [-1, 1] to [0, 255] uint8,
+    then upscales resolution using nearest-neighbour interpolation.
 
     Args:
         t (torch.Tensor): Tensor of shape (1, H, W) with values in [-1, 1].
@@ -108,9 +110,11 @@ def tensor_to_pil(t, scale=2):
     """
     arr = ((t.squeeze(0) * 0.5 + 0.5).clamp(0, 1).numpy() * 255).astype('uint8')
     h, w = arr.shape
-    return Image.fromarray(arr, mode='L').convert('RGB').resize(
+    # NOTE: FashionMNIST is grayscale, so we create a 'L' mode image and convert to 'RGB' for the montage
+    image = Image.fromarray(arr, mode='L').convert('RGB').resize(
         (w * scale, h * scale), Image.NEAREST
     )
+    return image
 
 
 def save_robustness_demo(test_loader, filename, alpha=0.4):
@@ -304,6 +308,8 @@ def main():
 
     print("[4/4] Printing technical report...")
     print_report(history, clean_acc, noisy_acc, sigma)
+
+    # TODO: add generalisation gap plot too?
 
 
 if __name__ == "__main__":
