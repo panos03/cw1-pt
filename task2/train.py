@@ -1,5 +1,5 @@
 """
-GenAI Usage Statement:
+GenAI Usage Statement: TODO
 Claude was used to verify the numerically stable log-softmax formula and to
 check the PyTorch Beta distribution sampling API.
 Specific mistake:
@@ -22,15 +22,15 @@ MODEL_PATH = os.path.join(SCRIPT_DIR, "model.pth")
 TRAINING_HISTORY_PATH = os.path.join(SCRIPT_DIR, "training_history.json")
 
 
-# Data Loading
+# Data Loading (same as Task 1)
 
 def get_data_loaders(batch_size=128, val_split=0.1):
     """
-    Download Fashion-MNIST and return train and validation data loaders.
+    Download Fashion-MNIST and create train and validation loaders.
 
     Args:
-        batch_size (int): Batch size for both loaders.
-        val_split (float): Fraction of training data reserved for validation.
+        batch_size (int): Batch size for data loaders.
+        val_split (float): Fraction of training data used for validation.
 
     Returns:
         train_loader (DataLoader): Training data loader.
@@ -40,53 +40,61 @@ def get_data_loaders(batch_size=128, val_split=0.1):
         transforms.ToTensor(),
         transforms.Normalize((0.5,), (0.5,))
     ])
-    full_train = torchvision.datasets.FashionMNIST(
+
+    full_train_dataset = torchvision.datasets.FashionMNIST(
         root=DATA_DIR, train=True, download=True, transform=transform
     )
-    num_val = int(len(full_train) * val_split)
-    num_train = len(full_train) - num_val
+
+    # Split training set into train and validation
+    num_train = len(full_train_dataset)
+    num_val = int(num_train * val_split)
+    num_train = num_train - num_val
+
     train_dataset, val_dataset = torch.utils.data.random_split(
-        full_train, [num_train, num_val],
+        full_train_dataset,
+        [num_train, num_val],
         generator=torch.Generator().manual_seed(42)
     )
+
     train_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=batch_size, shuffle=True
     )
     val_loader = torch.utils.data.DataLoader(
         val_dataset, batch_size=batch_size, shuffle=False
     )
+
     return train_loader, val_loader
 
 
-# Model
+# Model (same as Task 1 Baseline)
 
 class FashionMLP(nn.Module):
     """
-    Deep MLP with 6 linear layers for Fashion-MNIST classification.
-    Input: flattened 28x28 = 784 features.
-    Output: 10 class logits.
+    Deep funnel-shaped neural network with 6 hidden layers
+    Input: flattened 28x28 = 784 features
+    Output: 10 classes (Fashion-MNIST)
     """
 
     def __init__(self):
         super(FashionMLP, self).__init__()
-        self.flatten = nn.Flatten()
+        self.flatten = nn.Flatten()     # Flatten 2D image to 1D vector
         self.fc1 = nn.Linear(784, 512)
         self.fc2 = nn.Linear(512, 512)
         self.fc3 = nn.Linear(512, 256)
         self.fc4 = nn.Linear(256, 256)
         self.fc5 = nn.Linear(256, 128)
         self.fc6 = nn.Linear(128, 10)
-        self.relu = nn.ReLU()
+        self.relu = nn.ReLU()           # ReLU activation for non-linearity
 
     def forward(self, x):
         """
         Forward pass through the network.
 
         Args:
-            x (torch.Tensor): Input of shape (B, 1, 28, 28).
+            x (torch.Tensor): Input tensor of shape (batch_size, 1, 28, 28).
 
         Returns:
-            torch.Tensor: Logits of shape (B, 10).
+            torch.Tensor: Logits of shape (batch_size, 10).
         """
         x = self.flatten(x)
         x = self.relu(self.fc1(x))
@@ -94,7 +102,8 @@ class FashionMLP(nn.Module):
         x = self.relu(self.fc3(x))
         x = self.relu(self.fc4(x))
         x = self.relu(self.fc5(x))
-        return self.fc6(x)
+        x = self.fc6(x)
+        return x
 
 
 # From-Scratch Components
@@ -104,11 +113,11 @@ def to_onehot(labels, num_classes=10):
     Convert integer class labels to one-hot vectors.
 
     Args:
-        labels (torch.Tensor): Integer labels of shape (B,).
+        labels (torch.Tensor): Integer labels of shape (batch_size,).
         num_classes (int): Number of classes K.
 
     Returns:
-        torch.Tensor: One-hot tensor of shape (B, K).
+        torch.Tensor: One-hot tensor of shape (batch_size, K).
     """
     onehot = torch.zeros(labels.size(0), num_classes)
     onehot.scatter_(1, labels.unsqueeze(1), 1.0)
@@ -123,49 +132,45 @@ def mixup(x, y_onehot, alpha=0.4):
         x_mixed = lam * x[i] + (1-lam) * x[j]
         y_mixed = lam * y[i] + (1-lam) * y[j]
     where (i, j) pairs come from a random permutation of the batch.
-    Lambda is symmetrised as max(lam, 1-lam) so the primary sample
-    always has the larger weight.
-
-    Implemented using only basic tensor operations (no external MixUp library).
 
     Args:
-        x (torch.Tensor): Input images of shape (B, C, H, W).
-        y_onehot (torch.Tensor): One-hot labels of shape (B, K).
+        x (torch.Tensor): Input images of shape (batch_size, C, H, W).
+        y_onehot (torch.Tensor): One-hot labels of shape (batch_size, K).
         alpha (float): Beta distribution concentration parameter.
 
     Returns:
-        mixed_x (torch.Tensor): Mixed images of shape (B, C, H, W).
-        mixed_y (torch.Tensor): Mixed soft labels of shape (B, K).
+        mixed_x (torch.Tensor): Mixed images of shape (batch_size, C, H, W).
+        mixed_y (torch.Tensor): Mixed soft labels of shape (batch_size, K).
         lam (float): Mixing coefficient lambda used.
     """
-    # Sample lambda ~ Beta(alpha, alpha); symmetrise so lambda >= 0.5
-    lam_raw = torch.distributions.Beta(
+    # Sample lambda ~ Beta(alpha, alpha)
+    lam = torch.distributions.Beta(
         torch.tensor(float(alpha)), torch.tensor(float(alpha))
     ).sample().item()
-    lam = max(lam_raw, 1.0 - lam_raw)
 
     # Random permutation for pairing
     indices = torch.randperm(x.size(0))
 
-    # Convex interpolation of images and labels
+    # Mixup interpolation of batch of images and labels
     mixed_x = lam * x + (1.0 - lam) * x[indices]
     mixed_y = lam * y_onehot + (1.0 - lam) * y_onehot[indices]
+
     return mixed_x, mixed_y, lam
 
 
-def label_smoothing_cross_entropy(logits, soft_labels, smoothing=0.1):
+def label_smoothing_cross_entropy(logits, original_target_labels, smoothing=0.1):
     """
-    Cross-entropy loss with label smoothing, implemented from basic tensor ops.
+    Cross-entropy loss with label smoothing.
 
-    Smooths the target distribution by mixing with a uniform distribution:
-        y_smooth = (1 - eps) * soft_labels + eps / K
-    then computes cross-entropy using a numerically stable log-softmax:
-        log p(k) = logit_k - max(logits) - log sum_j exp(logit_j - max(logits))
+    Smooths the original labels by mixing with a uniform distribution:
+        y_smooth = (1 - eps) * original_target_labels + eps / K
+    Then computes cross-entropy loss:
+        loss = -sum(y_smooth * log_softmax(logits)) averaged over batch
 
     Args:
-        logits (torch.Tensor): Raw model outputs of shape (B, K).
-        soft_labels (torch.Tensor): Soft target distribution of shape (B, K);
-            may be one-hot labels or MixUp-blended targets.
+        logits (torch.Tensor): Raw model outputs of shape (batch_size, K).
+        original_target_labels (torch.Tensor): Original target labels of shape (batch_size, K),
+            may be one-hot labels or blended labels from MixUp.
         smoothing (float): Label smoothing epsilon in [0, 1).
 
     Returns:
@@ -173,16 +178,17 @@ def label_smoothing_cross_entropy(logits, soft_labels, smoothing=0.1):
     """
     K = logits.size(1)
 
-    # Apply label smoothing: redistribute eps probability mass uniformly
-    smooth = (1.0 - smoothing) * soft_labels + smoothing / K
+    # Apply label smoothing by distributing epsilon uniformly
+    smoothed_labels = (1.0 - smoothing) * original_target_labels + smoothing / K
 
-    # Numerically stable log-softmax
+    # Numerically stable log-softmax ( mathematically equivalent to log(softmax(logits)) )
     max_l = logits.max(dim=1, keepdim=True)[0]
-    stable = logits - max_l
+    stable = logits - max_l     # subtract max so exp doesn't overflow
     log_softmax = stable - torch.log(torch.exp(stable).sum(dim=1, keepdim=True))
 
-    # Negative log-likelihood under smoothed targets, mean over batch
-    loss = -(smooth * log_softmax).sum(dim=1).mean()
+    # Negative log-likelihood under smoothed labels, mean over batch
+    loss = -(smoothed_labels * log_softmax).sum(dim=1).mean()
+
     return loss
 
 
@@ -200,12 +206,14 @@ def compute_accuracy(model, data_loader):
         float: Accuracy as a fraction in [0, 1].
     """
     model.eval()
-    correct, total = 0, 0
+    correct = 0
+    total = 0
     with torch.no_grad():
         for images, labels in data_loader:
-            _, predicted = torch.max(model(images), dim=1)
-            correct += (predicted == labels).sum().item()
+            outputs = model(images)
+            _, predicted = torch.max(outputs, dim=1)
             total += labels.size(0)
+            correct += (predicted == labels).sum().item()
     return correct / total
 
 
@@ -318,7 +326,7 @@ def main():
     torch.manual_seed(42)
     alpha = 0.4        # MixUp Beta concentration parameter
     smoothing = 0.1    # Label smoothing epsilon
-    lr = 0.01
+    learning_rate = 0.01
     momentum = 0.9
     num_epochs = 50
     patience = 7
@@ -329,11 +337,11 @@ def main():
 
     print(f"\n[2/3] Training with MixUp (alpha={alpha}) + "
           f"Label Smoothing (eps={smoothing})...")
-    print(f"  SGD lr={lr}, momentum={momentum}, "
+    print(f"  SGD lr={learning_rate}, momentum={momentum}, "
           f"max epochs={num_epochs}, patience={patience}")
 
     model = FashionMLP()
-    optimiser = torch.optim.SGD(model.parameters(), lr=lr, momentum=momentum)
+    optimiser = torch.optim.SGD(model.parameters(), lr=learning_rate, momentum=momentum)
 
     train_accs, val_accs, stopped_epoch = train_with_early_stopping(
         model, train_loader, val_loader, optimiser,
