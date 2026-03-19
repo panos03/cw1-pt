@@ -1,10 +1,10 @@
 """
 GenAI Usage Statement:
-Claude was used to check torch operations such as torch.distributions.Beta(),
+Claude was used to check batch processing torch operations such as torch.distributions.Beta().sample(),
 to verify the numerically stable log-softmax formula, and for saving model and training history.
 Specific mistake:
-- thought best model weights were from early-stopped epoch, but are from early-stopped epoch minus 'patience',
-  also used a fixed lamda for a whole mixed-up batch, changed this to a different lamda per pair
+- batch processing of lamda in MixUp used a fixed value for the whole batch, changed this to a different lamda per pair.
+  also thought best model weights were from early-stopped epoch, but are from early-stopped epoch minus 'patience'. 
 """
 
 import torch

@@ -1,9 +1,10 @@
 """
-GenAI Usage Statement:  TODO
+GenAI Usage Statement:
 Claude was used for Pillow operations and plotting
 Specific mistake:
-- claude tried to change the mixup function to return class indices,
-  but I made it so that the class indices that were mixed up can be derived from the returned 'mixed_y' vector
+- claude tried to change the mixup function to return class indices for the montage,
+  but I made it so that the class indices that were mixed up can be derived from the returned 'mixed_y' vector.
+  also a formatting mistake with displaying text in the png
 """
 
 import torch
@@ -20,7 +21,6 @@ DATA_DIR = os.path.join(SCRIPT_DIR, "data")
 MODEL_PATH = os.path.join(SCRIPT_DIR, "model.pth")
 TRAINING_HISTORY_PATH = os.path.join(SCRIPT_DIR, "training_history.json")
 DEMO_PATH = os.path.join(SCRIPT_DIR, "robustness_demo.png")
-GAP_PLOT_PATH = os.path.join(SCRIPT_DIR, "generalization_gap.png")
 
 
 # Data Loading - for noisy test set evaluation
@@ -206,94 +206,6 @@ def save_robustness_demo(test_loader, filename, alpha=0.4):
     print(f"  Saved: {filename}")
 
 
-# Generalisation Gap Plot
-
-# (similar to plot for Task 1)
-def plot_accuracy_curves(history, filename):
-    """
-    Generate a PNG plotting train vs. validation accuracy over epochs.
-
-    Uses Pillow for drawing. Shows two curves:
-    - Train accuracy (dark blue)
-    - Validation accuracy (light blue)
-
-    Args:
-        history (dict): Training history with keys 'train_accs' and 'val_accs'.
-        filename (str): Output PNG file path.
-    """
-    train_accs = history["train_accs"]
-    val_accs = history["val_accs"]
-    num_epochs = len(train_accs)
-
-    width, height = 800, 500
-    margin_left = 80
-    margin_right = 160
-    margin_top = 50
-    margin_bottom = 60
-    plot_w = width - margin_left - margin_right
-    plot_h = height - margin_top - margin_bottom
-
-    img = Image.new("RGB", (width, height), "white")
-    draw = ImageDraw.Draw(img)
-
-    all_accs = train_accs + val_accs
-    y_min = max(0.0, min(all_accs) - 0.05)
-    y_max = min(1.0, max(all_accs) + 0.02)
-
-    def to_pixel(epoch_idx, acc):
-        px_x = margin_left + int(epoch_idx / max(num_epochs - 1, 1) * plot_w)
-        px_y = margin_top + int((1.0 - (acc - y_min) / (y_max - y_min)) * plot_h)
-        return px_x, px_y
-
-    # Axes
-    draw.line([(margin_left, margin_top), (margin_left, margin_top + plot_h)],
-              fill="black", width=2)
-    draw.line([(margin_left, margin_top + plot_h),
-               (margin_left + plot_w, margin_top + plot_h)],
-              fill="black", width=2)
-
-    # Y-axis ticks and grid
-    num_y_ticks = 6
-    for i in range(num_y_ticks + 1):
-        val = y_min + i * (y_max - y_min) / num_y_ticks
-        _, py = to_pixel(0, val)
-        draw.text((5, py - 6), f"{val:.2f}", fill="black")
-        draw.line([(margin_left, py), (margin_left + plot_w, py)],
-                  fill="#dddddd", width=1)
-
-    # X-axis ticks
-    for epoch in range(0, num_epochs, max(1, num_epochs // 6)):
-        px, _ = to_pixel(epoch, y_min)
-        draw.text((px - 5, margin_top + plot_h + 10), str(epoch + 1), fill="black")
-
-    # Title and axis labels
-    draw.text((width // 2 - 140, 10),
-              "Generalisation Gap: Train vs Val Accuracy", fill="black")
-    draw.text((width // 2 - 20, height - 20), "Epoch", fill="black")
-
-    def draw_curve(accs, color):
-        points = [to_pixel(i, a) for i, a in enumerate(accs)]
-        for i in range(len(points) - 1):
-            draw.line([points[i], points[i + 1]], fill=color, width=2)
-        for p in points:
-            draw.ellipse([p[0] - 2, p[1] - 2, p[0] + 2, p[1] + 2], fill=color)
-
-    draw_curve(train_accs, "#1565C0")  # Dark blue
-    draw_curve(val_accs,   "#90CAF9")  # Light blue
-
-    # Legend
-    legend_x = margin_left + plot_w + 15
-    legend_y = margin_top + 20
-    for label, color in [("Train", "#1565C0"), ("Val", "#90CAF9")]:
-        draw.line([(legend_x, legend_y + 5), (legend_x + 26, legend_y + 5)],
-                  fill=color, width=2)
-        draw.text((legend_x + 32, legend_y), label, fill="black")
-        legend_y += 25
-
-    img.save(filename)
-    print(f"  Saved plot: {filename}")
-
-
 # Technical Analysis
 
 def print_report(history, clean_acc, noisy_acc, sigma):
@@ -410,7 +322,23 @@ improvement greater than 1e-4 was observed for {patience} consecutive
 epochs, preventing late-stage overfitting beyond the regime where MixUp
 and label smoothing remain effective. The model weights achieving the
 lowest validation loss were restored before saving.
-""")
+
+4. GenAI Usage and Mistakes
+
+train.py:
+Claude was used to check torch operations such as torch.distributions.Beta(),
+to verify the numerically stable log-softmax formula, and for saving model and training history.
+Specific mistake:
+- used a fixed lamda for a whole mixed-up batch, changed this to a different lamda per pair.
+  also thought best model weights were from early-stopped epoch, but are from early-stopped epoch minus 'patience'. 
+
+task.py:
+Claude was used for Pillow operations and plotting
+Specific mistake:
+- claude tried to change the mixup function to return class indices,
+  but I made it so that the class indices that were mixed up can be derived from the returned 'mixed_y' vector.
+  also a formatting mistake with displaying text in the png
+  """)
 
 
 # Main
@@ -418,7 +346,7 @@ lowest validation loss were restored before saving.
 def main():
     """Load model, evaluate on clean/noisy test sets, save demo, print report."""
 
-    print("\n[1/5] Loading model and training history...")
+    print("\n[1/4] Loading model and training history...")
     model = FashionMLP()
     model.load_state_dict(torch.load(MODEL_PATH, weights_only=True))
     model.eval()
@@ -426,7 +354,7 @@ def main():
         history = json.load(f)
     print("  Loaded successfully.")
 
-    print("[2/5] Evaluating on clean and noisy test sets...")
+    print("[2/4] Evaluating on clean and noisy test sets...")
     test_loader = get_test_loader()
     clean_acc = compute_accuracy(model, test_loader)
     sigma = 0.3
@@ -434,13 +362,10 @@ def main():
     print(f"  Clean Test Acc:           {clean_acc:.4f}")
     print(f"  Noisy Test Acc (sigma={sigma}): {noisy_acc:.4f}")
 
-    print("[3/5] Saving robustness_demo.png...")
+    print("[3/4] Saving robustness_demo.png...")
     save_robustness_demo(test_loader, DEMO_PATH, alpha=history.get("alpha", 0.4))
 
-    print("[4/5] Saving generalization_gap.png...")
-    plot_accuracy_curves(history, GAP_PLOT_PATH)
-
-    print("[5/5] Printing technical report...")
+    print("[4/4] Printing technical report...")
     print_report(history, clean_acc, noisy_acc, sigma)
 
 

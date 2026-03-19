@@ -158,7 +158,6 @@ def print_analysis(training_history):
     bl_best_val = max(training_history["baseline_val_accs"])
     rg_best_val = max(training_history["reg_val_accs"])
 
-    # TODO
     print(f"""
 Summary Statistics:
   Baseline
