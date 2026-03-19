@@ -233,9 +233,8 @@ def print_report(history, clean_acc, noisy_acc, sigma):
     correct_target = (1.0 - eps) + eps / K
     wrong_target = eps / K
 
-    # TODO
     print(f"""
-=== Task 2: Results Summary ===
+Summary Statistics:
   MixUp alpha:              {alpha}
   Label Smoothing epsilon:  {eps}
   Early stopping patience:  {patience}
@@ -246,98 +245,67 @@ def print_report(history, clean_acc, noisy_acc, sigma):
   Noisy Test Acc (sigma={sigma}): {noisy_acc:.4f}
   Robustness Drop:          {clean_acc - noisy_acc:.4f}
 
-=== Technical Analysis ===
+1. Why MixUp Prevents Memorisation of Training Samples
 
-1. Why MixUp Prevents Memorisation
-
-Standard empirical risk minimisation (ERM) trains on fixed (x, y) pairs,
-which pushes the network to memorise sharp, sample-specific input-output
-mappings. MixUp breaks this by replacing every training sample with a
-convex interpolation between two randomly selected examples:
-
+Standard training is based on Empirical Risk Minimisation (ERM), which uses 
+fixed (x, y) pairs, encouraging the network to memorise sample-specific 
+mappings. Mixup prevents this by replacing discrete training inputs with a 
+convex blend of two random examples:
     x_mixed = lam * x_i + (1-lam) * x_j
     y_mixed = lam * y_i + (1-lam) * y_j,  lam ~ Beta({alpha}, {alpha})
+   By training on these interpolations, the model rarely sees an original 
+training point, changing the objective to Vicinal Risk Minimisation (VRM) 
+instead of ERM, where risk is minimised across the entire vicinity between 
+pairs of points. The network learns outputs that vary smoothly between any 
+two examples, forming a continuous landscape in its latent space. This 
+prevents memorisation of training samples, which happens when sharp decision 
+boundaries are formed tightly around the individual samples.
+   We can see this increased robustness in action, as the model's clean test 
+accuracy is {clean_acc:.4f}, and under Gaussian noise (sigma={sigma}) it drops 
+by only {clean_acc - noisy_acc:.4f} to {noisy_acc:.4f}. Because the model learned smooth 
+representations rather than sharp ones, small pixel differences only slightly 
+affect the logits.
 
-Every mixed sample lies strictly off the training manifold — it is a
-point on the line segment between two real examples in input space. The
-model never observes an actual training point during optimisation and
-therefore cannot memorise individual samples in the way ERM allows.
+2. How Label Smoothing Prevents Overshooting During Optimisation
 
-MixUp also constrains the function the network can learn. Perfect
-memorisation requires a highly non-linear function with sharp, isolated
-response peaks around each training point. Forcing the loss to be small
-at convex combinations implicitly enforces a Lipschitz-like smoothness:
-the model's output must vary nearly linearly with lam. This is equivalent
-to vicinal risk minimisation, where risk is minimised in a neighbourhood
-around each pair of training points rather than at discrete points alone.
-The decision boundaries are pushed away from real examples, reducing
-reliance on brittle, sample-specific features.
-
-This robustness is confirmed quantitatively. Clean test accuracy is
-{clean_acc:.4f}. Under Gaussian pixel noise (sigma={sigma}) it drops by only
-{clean_acc - noisy_acc:.4f} to {noisy_acc:.4f}. Because the model learned smooth,
-distributed representations rather than sharp, localised ones, small
-perturbations to pixel values change the class logits only slightly.
-
-2. How Label Smoothing Prevents Overshooting
-
-Hard one-hot targets instruct the network to drive the correct-class
-logit to +inf and all others to -inf. The cross-entropy gradient with
-respect to the correct-class logit is (p_k - 1), where p_k approaches
-1 but never reaches it: the gradient never vanishes, so the optimiser
-keeps nudging weights to ever-larger values. This overshooting leads to
-over-confident, poorly calibrated predictions and large effective
-learning-rate steps near convergence.
-
-Label smoothing replaces hard targets with a softer distribution:
-
+In standard training, hard one-hot label targets result in the network pushing 
+the correct-class logit to +inf and all others to -inf. This is because the 
+cross-entropy loss is only minimised when the predicted probability perfectly 
+matches the one-hot target, which never happens because this Softmax 
+probability only approaches but never equals 1. Hence the optimiser keeps 
+increasing weights, leading to overconfident predictions called overshooting.
+   Label smoothing stops this by redistributing a small mass epsilon across 
+all K classes, to create soft targets before calculating loss:
     y_smooth_k = (1 - eps) * y_k + eps / K,  eps={eps}, K={K}
+By setting the correct-class target to {correct_target:.4f} and each incorrect-
+class target to {wrong_target:.4f}, the loss is minimised when the model's 
+predicted probability matches these softened targets rather than an impossible 
+one-hot vector.
+   Hence the target probability will be met more easily and model weights 
+won't grow without bound. This is a form of regularisation, similar to L2 
+regularisation (which penalises weights directly), but instead penalising 
+overconfident outputs and preventing overshooting.
+   Notably, label smoothing complements MixUp, as mixing two samples generates 
+soft label targets which label smoothing can better optimise for. Together, 
+they produce robust models that maintain high accuracy even under input 
+perturbations, such as the Gaussian noise mentioned previously.
 
-The correct-class target becomes {correct_target:.4f} instead of 1.0,
-and each wrong-class target becomes {wrong_target:.4f} instead of 0.0.
-The loss is now minimised at finite logit differences, because the
-target distribution has full support over all K classes — no finite
-logit gap achieves zero loss. The residual eps/K mass on wrong classes
-acts as a continuous restoring force that prevents weights from drifting
-to extreme values, directly limiting overshooting.
+3. GenAI Usage and Mistakes
 
-Geometrically, label smoothing changes the loss landscape so the global
-minimum sits at a finite, bounded weight configuration rather than at
-the limit of an infinite norm ball. This is analogous to L2
-regularisation applied in output probability space: instead of penalising
-large weight norms directly, it penalises over-confident predictions,
-which indirectly limits activation magnitudes through the loss gradient.
-
-Combined with MixUp, the effect is compounded. MixUp already produces
-soft, multi-class targets (the lam-blend of two one-hot vectors); label
-smoothing then prevents over-confidence in those mixed targets. Together
-they produce well-calibrated uncertainty in the model, especially
-valuable under distributional shift such as the Gaussian noise above.
-
-3. Early Stopping
-
-Validation loss (label-smoothing cross-entropy on clean examples) was
-tracked after every epoch. Training halted at epoch {stopped} when no
-improvement greater than 1e-4 was observed for {patience} consecutive
-epochs, preventing late-stage overfitting beyond the regime where MixUp
-and label smoothing remain effective. The model weights achieving the
-lowest validation loss were restored before saving.
-
-4. GenAI Usage and Mistakes
-
-train.py:
-Claude was used to check torch operations such as torch.distributions.Beta(),
-to verify the numerically stable log-softmax formula, and for saving model and training history.
+In train.py, Claude was used to check batch processing torch operations such 
+as torch.distributions.Beta().sample(), to verify the numerically stable 
+log-softmax formula, and for saving model and training history.
 Specific mistake:
-- used a fixed lamda for a whole mixed-up batch, changed this to a different lamda per pair.
-  also thought best model weights were from early-stopped epoch, but are from early-stopped epoch minus 'patience'. 
-
-task.py:
-Claude was used for Pillow operations and plotting
+batch processing of lamda in MixUp used a fixed value for the whole batch, 
+changed this to a different lamda per pair. also thought best model weights 
+were from early-stopped epoch, but are from early-stopped epoch minus 
+'patience'.
+In task.py, Claude was used for Pillow operations and plotting
 Specific mistake:
-- claude tried to change the mixup function to return class indices,
-  but I made it so that the class indices that were mixed up can be derived from the returned 'mixed_y' vector.
-  also a formatting mistake with displaying text in the png
+claude tried to change the mixup function to return class indices for the 
+montage, but I made it so that the class indices that were mixed up can be 
+derived from the returned 'mixed_y' vector. also a formatting mistake with 
+displaying text in the png
   """)
 
 
