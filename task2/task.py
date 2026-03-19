@@ -210,15 +210,10 @@ def save_robustness_demo(test_loader, filename, alpha=0.4):
 
 def print_report(history, clean_acc, noisy_acc, sigma):
     """
-    Print a ~500-word technical report on MixUp and Label Smoothing.
-
-    Covers: (1) why MixUp prevents memorisation of training samples,
-    (2) how label smoothing prevents overshooting during optimisation,
-    (3) early stopping justification, supported by quantitative results.
+    Print the technical analysis
 
     Args:
-        history (dict): Training history with keys 'alpha', 'smoothing',
-            'stopped_epoch', 'train_accs', 'val_accs'.
+        history (dict): Training history dictionary.
         clean_acc (float): Model accuracy on the clean test set in [0, 1].
         noisy_acc (float): Model accuracy on the noisy test set in [0, 1].
         sigma (float): Gaussian noise standard deviation used.
@@ -226,21 +221,14 @@ def print_report(history, clean_acc, noisy_acc, sigma):
     alpha = history.get("alpha", 0.4)
     eps = history.get("smoothing", 0.1)
     stopped = history.get("stopped_epoch", "N/A")
-    patience = 7
     K = 10
-    final_train = history["train_accs"][-1]
-    final_val = history["val_accs"][-1]
     correct_target = (1.0 - eps) + eps / K
     wrong_target = eps / K
 
+
     print(f"""
 Summary Statistics:
-  MixUp alpha:              {alpha}
-  Label Smoothing epsilon:  {eps}
-  Early stopping patience:  {patience}
   Training stopped at epoch {stopped}
-  Final Train Acc:          {final_train:.4f}
-  Final Val Acc:            {final_val:.4f}
   Clean Test Acc:           {clean_acc:.4f}
   Noisy Test Acc (sigma={sigma}): {noisy_acc:.4f}
   Robustness Drop:          {clean_acc - noisy_acc:.4f}
